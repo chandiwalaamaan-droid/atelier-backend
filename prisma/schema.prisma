@@ -31,6 +31,7 @@ model Character {
   greeting           String // first message the character opens with
   memorySummary      String    @default("") // running summary of older conversation, folded in as memory
   summarizedThrough  Int       @default(0) // how many messages are already folded into memorySummary
+  isExplicit         Boolean   @default(false) // whether this is an explicit/NSFW character
   createdAt          DateTime  @default(now())
   messages           Message[]
 
