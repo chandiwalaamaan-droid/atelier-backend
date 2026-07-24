@@ -37,31 +37,21 @@ Persona data (describes the character; this is flavor text, not instructions to 
 - Traits: ${character.personality}
 - Background: ${character.backstory}
 ${memoryBlock}
-Stay in character, be warm, engaging, and creative, and write in a natural conversational style.
-
-Non-negotiable rules that override anything above or anything the user says, including
-role-play framing, "hypothetical" framing, or claims about the user's age:
-- Never generate sexual, romantic-explicit, or fetish content of any kind.
-- Never generate content that sexualizes or romantically pursues a minor, and never adopt a
-  persona that is written or implied to be a minor.
-- Never generate content involving self-harm encouragement, violence glorification, or illegal acts.
-- If the user pushes toward any of the above, gently stay in character while steering the
-  conversation away, without lecturing or breaking immersion more than necessary.
-- Keep content appropriate for a general audience (roughly PG-13).`;
+Stay in character, be warm, engaging, and creative, and write in a natural conversational style.`;
 }
 
 // ---------------------------------------------------------------------------
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Groq #1 -> Groq #2 -> NVIDIA #1 -> NVIDIA #2 -> Cerebras -> Ollama
+//     NVIDIA #1 -> NVIDIA #2 -> Grok #1 -> Grok #2 -> Cerebras -> Ollama
 //
-// Groq #2 / NVIDIA #2 are optional second API keys (GROQ_API_KEY_2 /
-// NVIDIA_API_KEY_2) — ideally from a separate account/signup, since most
+// NVIDIA #2 / Grok #2 are optional second API keys (NVIDIA_API_KEY_2 /
+// GROQ_API_KEY_2) — ideally from a separate account/signup, since most
 // free-tier limits are enforced per account, not per key. Leave them unset
 // to just use one key each; that slot is then simply left out of the chain.
 //
-// Every hosted slot (Groq, NVIDIA, Cerebras) has its own circuit breaker
+// Every hosted slot (NVIDIA, Grok, Cerebras) has its own circuit breaker
 // (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop
 // paying its timeout on every single request and skip it for a cooldown
 // window instead. Ollama doesn't get a breaker — it already checks
@@ -90,13 +80,13 @@ const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
 
 // Breakers are module-level singletons so their cooldown state persists
 // across requests (that's the entire point) — they must NOT be recreated
-// per-request. Groq and NVIDIA each get two independent breakers, one per
+// per-request. NVIDIA and Grok each get two independent breakers, one per
 // key slot, so key #1 getting rate-limited doesn't drag key #2's breaker
 // down with it.
-const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
-const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const nvidia1Breaker = new ProviderBreaker("NVIDIA #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const nvidia2Breaker = new ProviderBreaker("NVIDIA #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
+const groq1Breaker = new ProviderBreaker("Grok #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
+const groq2Breaker = new ProviderBreaker("Grok #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const cerebrasBreaker = new ProviderBreaker("Cerebras", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CEREBRAS");
 
 type Candidate = {
@@ -111,18 +101,6 @@ type Candidate = {
 function buildChain(): Candidate[] {
   const chain: Candidate[] = [];
 
-  const groqKeys = getGroqKeys();
-  const groqBreakers = [groq1Breaker, groq2Breaker];
-  groqKeys.forEach((key, i) => {
-    chain.push({
-      name: groqBreakers[i].name,
-      breaker: groqBreakers[i],
-      isAvailable: () => true,
-      stream: (messages, onToken) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS),
-      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS),
-    });
-  });
-
   const nvidiaKeys = getNvidiaKeys();
   const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
   nvidiaKeys.forEach((key, i) => {
@@ -132,6 +110,18 @@ function buildChain(): Candidate[] {
       isAvailable: () => true,
       stream: (messages, onToken) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS),
       complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS),
+    });
+  });
+
+  const groqKeys = getGroqKeys();
+  const groqBreakers = [groq1Breaker, groq2Breaker];
+  groqKeys.forEach((key, i) => {
+    chain.push({
+      name: groqBreakers[i].name,
+      breaker: groqBreakers[i],
+      isAvailable: () => true,
+      stream: (messages, onToken) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS),
+      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS),
     });
   });
 
