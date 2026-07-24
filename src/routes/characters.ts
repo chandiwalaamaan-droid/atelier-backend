@@ -41,13 +41,14 @@ router.post("/", asyncHandler(async (req, res) => {
   const greeting = clean(body.greeting);
   const avatarEmoji = clean(body.avatarEmoji, "🌸").slice(0, 8) || "🌸";
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : "#c9a227";
+  const isExplicit = body.isExplicit === true;
 
   if (!name || !personality || !backstory || !greeting) {
     return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
   }
 
   const character = await prisma.character.create({
-    data: { ownerId: userId, name, tagline, personality, backstory, greeting, avatarEmoji, accentColor },
+    data: { ownerId: userId, name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit },
   });
 
   return res.json({ character });
@@ -78,6 +79,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const greeting = clean(body.greeting, existing.greeting);
   const avatarEmoji = clean(body.avatarEmoji, existing.avatarEmoji).slice(0, 8) || existing.avatarEmoji;
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : existing.accentColor;
+  const isExplicit = typeof body.isExplicit === "boolean" ? body.isExplicit : existing.isExplicit;
 
   if (!name || !personality || !backstory || !greeting) {
     return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
@@ -85,7 +87,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
 
   const character = await prisma.character.update({
     where: { id: req.params.id },
-    data: { name, tagline, personality, backstory, greeting, avatarEmoji, accentColor },
+    data: { name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit },
   });
 
   return res.json({ character });
