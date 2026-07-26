@@ -29,6 +29,8 @@ CREATE UNIQUE INDEX "PaymentOrder_razorpayOrderId_key" ON "PaymentOrder"("razorp
 CREATE INDEX "PaymentOrder_userId_idx" ON "PaymentOrder"("userId");
 CREATE INDEX "PaymentOrder_razorpayOrderId_idx" ON "PaymentOrder"("razorpayOrderId");
 
+ALTER TABLE "PaymentOrder" SET (schema_locked = false);
+
 ALTER TABLE "PaymentOrder"
     ADD CONSTRAINT "PaymentOrder_userId_fkey"
     FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -50,6 +50,15 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 -- CreateIndex
 CREATE INDEX "Message_characterId_userId_createdAt_idx" ON "Message"("characterId", "userId", "createdAt");
 
+-- CockroachDB (v26.2+) creates new tables with schema_locked = true by
+-- default (a changefeed-performance optimization) — that blocks the
+-- ALTER TABLE ... ADD CONSTRAINT statements below in the same migration.
+-- Left unlocked permanently rather than re-locked, since later migrations
+-- keep adding columns/constraints to these same tables.
+ALTER TABLE "Character" SET (schema_locked = false);
+ALTER TABLE "User" SET (schema_locked = false);
+ALTER TABLE "Message" SET (schema_locked = false);
+
 -- AddForeignKey
 ALTER TABLE "Character" ADD CONSTRAINT "Character_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

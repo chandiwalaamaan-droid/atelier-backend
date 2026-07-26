@@ -36,6 +36,10 @@ CREATE TABLE "PasswordResetToken" (
 CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
 CREATE INDEX "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
 
+-- Newly created tables default to schema_locked = true on this CockroachDB
+-- version, which blocks the ADD CONSTRAINT below.
+ALTER TABLE "PasswordResetToken" SET (schema_locked = false);
+
 ALTER TABLE "PasswordResetToken"
     ADD CONSTRAINT "PasswordResetToken_userId_fkey"
     FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -53,6 +57,8 @@ CREATE TABLE "EmailVerificationToken" (
 
 CREATE UNIQUE INDEX "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken"("tokenHash");
 CREATE INDEX "EmailVerificationToken_userId_idx" ON "EmailVerificationToken"("userId");
+
+ALTER TABLE "EmailVerificationToken" SET (schema_locked = false);
 
 ALTER TABLE "EmailVerificationToken"
     ADD CONSTRAINT "EmailVerificationToken_userId_fkey"
@@ -73,6 +79,8 @@ CREATE TABLE "Report" (
 
 CREATE INDEX "Report_characterId_idx" ON "Report"("characterId");
 CREATE INDEX "Report_status_idx" ON "Report"("status");
+
+ALTER TABLE "Report" SET (schema_locked = false);
 
 ALTER TABLE "Report"
     ADD CONSTRAINT "Report_characterId_fkey"
