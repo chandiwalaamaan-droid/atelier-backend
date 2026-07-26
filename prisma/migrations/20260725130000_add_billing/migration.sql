@@ -30,9 +30,11 @@ CREATE TABLE "PaymentOrder" (
     CONSTRAINT "PaymentOrder_pkey" PRIMARY KEY ("id")
 );
 
+-- Unlock before creating indexes — CockroachDB locks new tables by
+-- default and blocks any schema change, including CREATE INDEX, until
+-- unlocked.
+ALTER TABLE "PaymentOrder" SET (schema_locked = false);
+
 CREATE UNIQUE INDEX "PaymentOrder_razorpayOrderId_key" ON "PaymentOrder"("razorpayOrderId");
 CREATE INDEX "PaymentOrder_userId_idx" ON "PaymentOrder"("userId");
 CREATE INDEX "PaymentOrder_razorpayOrderId_idx" ON "PaymentOrder"("razorpayOrderId");
-
--- Unlock so the follow-up _fk migration can add the FK constraint.
-ALTER TABLE "PaymentOrder" SET (schema_locked = false);

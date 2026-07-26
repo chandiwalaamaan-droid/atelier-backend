@@ -41,6 +41,20 @@ CREATE TABLE "Message" (
     CONSTRAINT "Message_pkey" PRIMARY KEY ("id")
 );
 
+-- CockroachDB (v26.2+) creates new tables with schema_locked = true by
+-- default (a changefeed-performance optimization). This blocks ANY later
+-- schema change on the table within this same migration — including the
+-- CREATE INDEX statements below — so the unlock must happen here, right
+-- after CREATE TABLE and before any index/constraint touches these
+-- tables. (ADD CONSTRAINT statements still live in the follow-up
+-- 0_initial_schema_fk migration, which runs as its own separate
+-- transaction after this one has fully committed.) Left unlocked
+-- permanently rather than re-locked, since later migrations keep adding
+-- columns/constraints to these same tables.
+ALTER TABLE "Character" SET (schema_locked = false);
+ALTER TABLE "User" SET (schema_locked = false);
+ALTER TABLE "Message" SET (schema_locked = false);
+
 -- CreateIndex
 CREATE INDEX "Character_ownerId_idx" ON "Character"("ownerId");
 
@@ -49,17 +63,3 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
 CREATE INDEX "Message_characterId_userId_createdAt_idx" ON "Message"("characterId", "userId", "createdAt");
-
--- CockroachDB (v26.2+) creates new tables with schema_locked = true by
--- default (a changefeed-performance optimization). Prisma runs this whole
--- file in one transaction, and CockroachDB doesn't apply schema changes
--- within a transaction atomically — so an unlock here would NOT be visible
--- to an ADD CONSTRAINT later in this same file. Unlocking is done here;
--- the ADD CONSTRAINT statements live in the follow-up
--- 0_initial_schema_fk migration instead, which runs as its own separate
--- transaction after this one has fully committed. Left unlocked
--- permanently rather than re-locked, since later migrations keep adding
--- columns/constraints to these same tables.
-ALTER TABLE "Character" SET (schema_locked = false);
-ALTER TABLE "User" SET (schema_locked = false);
-ALTER TABLE "Message" SET (schema_locked = false);
