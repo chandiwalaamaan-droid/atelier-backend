@@ -179,11 +179,14 @@ export const SUMMARIZE_TRIGGER = 28;
 // because all three serve a raw Meta Llama model with no extra safety layer
 // applied server-side — this app supports an explicit/NSFW roleplay mode,
 // and Llama goes along with mature fictional content far more readily than
-// Groq's current default (openai/gpt-oss-120b), which has refusals baked in
-// deep and resists explicit-mode content even with a permissive system
-// prompt. So the three Llama-based hosted slots get first crack, and gpt-oss
-// is a fallback rather than a primary path. If GROQ_MODEL is ever pointed at
-// a different (more permissive) model, it's worth reconsidering this order.
+// some hosted alternatives, like Groq's now-deprecated llama-3.3-70b-versatile
+// replacement option openai/gpt-oss-120b, which has refusals baked in deep
+// and resists explicit-mode content even with a permissive system prompt.
+// GROQ_MODEL defaults to qwen/qwen3.6-27b instead (see ./groq.ts) precisely
+// to avoid that — so Groq gets slotted in with the other raw-model
+// providers rather than treated as a fallback-of-last-resort. If GROQ_MODEL
+// is ever pointed at gpt-oss or another safety-layered model, it's worth
+// reconsidering this order.
 //
 // Every hosted slot (NVIDIA, Cerebras, Groq) has its own circuit breaker
 // (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop

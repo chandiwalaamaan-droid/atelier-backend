@@ -3,8 +3,14 @@ import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./open
 const BASE_URL = "https://api.groq.com/openai/v1";
 // llama-3.3-70b-versatile was deprecated by Groq on 2026-06-17 and is slated
 // for full shutdown by August 2026. Groq's recommended replacement is
-// openai/gpt-oss-120b (see https://console.groq.com/docs/deprecations).
-const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+// openai/gpt-oss-120b, but gpt-oss has refusals baked in deep and resists
+// this app's explicit/NSFW roleplay mode even with a permissive system
+// prompt (see the fallback-chain note in ./index.ts). qwen/qwen3.6-27b is
+// the other Groq-recommended replacement and — like the Llama models this
+// app is built around — has no extra safety layer applied server-side, so
+// it's used as the default here instead. Override with GROQ_MODEL if you
+// want gpt-oss-120b or anything else.
+const MODEL = process.env.GROQ_MODEL || "qwen/qwen3.6-27b";
 
 export function isGroqConfigured() {
   return Boolean(process.env.GROQ_API_KEY);

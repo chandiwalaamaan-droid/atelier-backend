@@ -27,12 +27,19 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      # Avatar image generation — Pollinations (already free/keyless) is
+      # primary; this is the fallback used only if Pollinations fails.
+      # Free token from huggingface.co.
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+      - key: HUGGINGFACE_IMAGE_MODEL
+        value: "black-forest-labs/FLUX.1-schnell"
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_KEY_2
         sync: false
       - key: GROQ_MODEL
-        value: "llama-3.3-70b-versatile"
+        value: "qwen/qwen3.6-27b"
       - key: NVIDIA_API_KEY
         sync: false
       - key: NVIDIA_API_KEY_2
