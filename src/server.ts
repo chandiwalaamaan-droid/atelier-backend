@@ -3,7 +3,6 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import cron from "node-cron";
-import path from "path";
 
 import { runRetentionCleanup } from "./jobs/retentionCleanup";
 import authRoutes from "./routes/auth";
@@ -55,10 +54,9 @@ app.post("/api/billing/webhook", express.raw({ type: "application/json" }), asyn
 
 app.use(express.json({ limit: "2mb" }));
 
-// Avatar image uploads written to disk by routes/avatar.ts — served back out
-// here. On Render, mount a persistent disk at public/uploads (see render.yaml)
-// so these survive restarts/deploys.
-app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
+// Avatar images (uploaded or AI-generated) are hosted on Cloudinary — see
+// src/lib/cloudinary.ts — so there's no local-disk uploads folder to serve
+// and no persistent disk needed on Render.
 
 app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);

@@ -1,10 +1,9 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler";
 import multer from "multer";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
+import { uploadAvatarBuffer } from "../lib/cloudinary";
 
 const router = Router();
 
@@ -17,8 +16,6 @@ const ALLOWED_TYPES: Record<string, string> = {
 const MAX_BYTES = 5 * 1024 * 1024; // 5MB
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES } });
-
-const uploadsDir = path.join(process.cwd(), "public", "uploads", "avatars");
 
 // POST /api/characters/:id/avatar — upload an image file
 router.post("/:id/avatar", upload.single("avatar"), asyncHandler(async (req, res) => {
@@ -39,12 +36,8 @@ router.post("/:id/avatar", upload.single("avatar"), asyncHandler(async (req, res
     return res.status(400).json({ error: "Use a PNG, JPEG, WebP, or GIF image." });
   }
 
-  await mkdir(uploadsDir, { recursive: true });
-
-  const filename = `${req.params.id}-${Date.now()}.${ext}`;
-  await writeFile(path.join(uploadsDir, filename), file.buffer);
-
-  const avatarUrl = `/uploads/avatars/${filename}`;
+  const publicId = `${req.params.id}-${Date.now()}`;
+  const avatarUrl = await uploadAvatarBuffer(file.buffer, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
 
   return res.json({ character: updated });
@@ -141,11 +134,8 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
     return res.status(502).json({ error: "Image generation returned no image." });
   }
 
-  await mkdir(uploadsDir, { recursive: true });
-  const filename = `${req.params.id}-${Date.now()}-generated.jpg`;
-  await writeFile(path.join(uploadsDir, filename), bytes);
-
-  const avatarUrl = `/uploads/avatars/${filename}`;
+  const publicId = `${req.params.id}-${Date.now()}-generated`;
+  const avatarUrl = await uploadAvatarBuffer(bytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
 
   return res.json({ character: updated });

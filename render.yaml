@@ -9,13 +9,6 @@ services:
     # `db push`, which would silently ignore the migration history table.
     buildCommand: "npm install && npx prisma migrate deploy && npm run build"
     startCommand: "npm run start"
-    disk:
-      # Avatar uploads are written to public/uploads/avatars on local disk
-      # (see src/routes/avatar.ts) — a persistent disk is required so
-      # uploads survive restarts/deploys.
-      name: atelier-uploads
-      mountPath: /opt/render/project/src/public/uploads
-      sizeGB: 1
     envVars:
       - key: DATABASE_URL
         sync: false # set this to your CockroachDB Serverless connection string in the Render dashboard
@@ -25,6 +18,14 @@ services:
       # comma-separated if you have more than one (prod + deploy previews).
       # e.g. "https://your-site.netlify.app"
       - key: FRONTEND_URL
+        sync: false
+      # Avatar hosting (uploaded + AI-generated images). Free account at
+      # cloudinary.com — no persistent disk needed, images survive restarts.
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
         sync: false
       - key: GROQ_API_KEY
         sync: false
