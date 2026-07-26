@@ -41,12 +41,10 @@ CREATE TABLE "PasswordResetToken" (
     CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
 );
 
--- Unlock the three new tables (see note at the top of this file) before
--- creating indexes on them — CockroachDB locks new tables by default and
--- blocks any schema change, including CREATE INDEX, until unlocked.
+-- Unlock before creating indexes on it — CockroachDB locks new tables by
+-- default and blocks any schema change, including CREATE INDEX, until
+-- unlocked.
 ALTER TABLE "PasswordResetToken" SET (schema_locked = false);
-ALTER TABLE "EmailVerificationToken" SET (schema_locked = false);
-ALTER TABLE "Report" SET (schema_locked = false);
 
 CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
 CREATE INDEX "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
@@ -61,6 +59,8 @@ CREATE TABLE "EmailVerificationToken" (
 
     CONSTRAINT "EmailVerificationToken_pkey" PRIMARY KEY ("id")
 );
+
+ALTER TABLE "EmailVerificationToken" SET (schema_locked = false);
 
 CREATE UNIQUE INDEX "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken"("tokenHash");
 CREATE INDEX "EmailVerificationToken_userId_idx" ON "EmailVerificationToken"("userId");
@@ -77,6 +77,8 @@ CREATE TABLE "Report" (
 
     CONSTRAINT "Report_pkey" PRIMARY KEY ("id")
 );
+
+ALTER TABLE "Report" SET (schema_locked = false);
 
 CREATE INDEX "Report_characterId_idx" ON "Report"("characterId");
 CREATE INDEX "Report_status_idx" ON "Report"("status");
