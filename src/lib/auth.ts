@@ -1,6 +1,8 @@
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import type { Request, Response } from "express";
+import { touchActivity } from "./activity";
+import { prisma } from "./db";
 
 export const COOKIE_NAME = "session";
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -71,5 +73,18 @@ export async function getCurrentUserId(req: Request): Promise<string | null> {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return null;
   const session = await verifySessionToken(token);
-  return session?.userId ?? null;
+  if (!session?.userId) return null;
+
+  // A session JWT can outlive the account it points to — it's valid for 30
+  // days, but the retention job (src/jobs/retentionCleanup.ts) can anonymize
+  // an account at any point in that window. Treat an anonymized/deleted
+  // account as "not logged in" rather than trusting the token alone.
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { deletedAt: true },
+  });
+  if (!user || user.deletedAt) return null;
+
+  touchActivity(session.userId);
+  return session.userId;
 }

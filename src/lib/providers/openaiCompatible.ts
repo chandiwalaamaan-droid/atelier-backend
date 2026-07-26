@@ -31,10 +31,23 @@ export async function streamOpenAICompatibleChat(
   model: string,
   messages: ChatMessage[],
   onToken: (chunk: string) => void,
-  timeoutMs: number
+  timeoutMs: number,
+  clientSignal?: AbortSignal
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
+  // Distinguishes a client-initiated stop (the user hit "Stop", the reply so
+  // far should still be kept) from a genuine provider timeout/error (which
+  // should surface as a failure so the fallback chain can move on).
+  let clientAborted = clientSignal?.aborted ?? false;
+  const onClientAbort = () => {
+    clientAborted = true;
+    controller.abort();
+  };
+  if (clientSignal) {
+    if (clientSignal.aborted) controller.abort();
+    else clientSignal.addEventListener("abort", onClientAbort);
+  }
   const timer = setTimeout(() => {
     if (!firstTokenReceived) controller.abort();
   }, timeoutMs);
@@ -52,6 +65,7 @@ export async function streamOpenAICompatibleChat(
         signal: controller.signal,
       });
     } catch (err) {
+      if (clientAborted) return "";
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new Error(`Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
       }
@@ -73,6 +87,9 @@ export async function streamOpenAICompatibleChat(
       try {
         chunk = await reader.read();
       } catch (err) {
+        // The user stopped generation mid-stream — return what was
+        // produced so far instead of treating this as a provider failure.
+        if (clientAborted) return fullText;
         if (err instanceof DOMException && err.name === "AbortError") {
           throw new Error(`Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
         }
@@ -107,11 +124,13 @@ export async function streamOpenAICompatibleChat(
           onToken(token);
         }
       }
+      if (clientAborted) return fullText;
     }
 
     return fullText;
   } finally {
     clearTimeout(timer);
+    if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);
   }
 }
 

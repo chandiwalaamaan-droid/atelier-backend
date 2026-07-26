@@ -15,13 +15,31 @@ export function isCerebrasConfigured() {
   return Boolean(process.env.CEREBRAS_API_KEY);
 }
 
+/**
+ * Same idea as getNvidiaKeys()/getGroqKeys() — a second key
+ * (CEREBRAS_API_KEY_2) is optional, ideally from a separate account/signup
+ * since free-tier limits are enforced per account, not per key. Leave it
+ * unset to just use one key; that slot is then simply left out of the chain.
+ *
+ * Returns each configured key tagged with its original 1-based slot number,
+ * not its position in this filtered array — otherwise, if only
+ * CEREBRAS_API_KEY_2 is set, that key would end up at array index 0 and get
+ * labeled "Cerebras #1" even though it's really the second key.
+ */
+export function getCerebrasKeys(): { key: string; slot: number }[] {
+  return [process.env.CEREBRAS_API_KEY, process.env.CEREBRAS_API_KEY_2]
+    .map((key, i) => ({ key, slot: i + 1 }))
+    .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
+}
+
 export async function streamCerebrasChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
   apiKey: string,
-  timeoutMs: number
+  timeoutMs: number,
+  clientSignal?: AbortSignal
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal);
 }
 
 export async function completeCerebrasChat(

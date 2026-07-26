@@ -10,7 +10,16 @@ import {
   listAvailableProviders,
   RECENT_MESSAGE_WINDOW,
   SUMMARIZE_TRIGGER,
+  isGroqConfigured,
+  getGroqKeys,
+  synthesizeGroqSpeech,
+  splitForSpeech,
+  concatWavBuffers,
+  TTS_VOICES,
+  parseSpiceLevel,
+  parseRoleplayStyle,
 } from "../lib/providers";
+import type { TtsVoice } from "../lib/providers";
 
 const router = Router();
 
@@ -61,9 +70,22 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
 
   const body = req.body ?? {};
   const isRegenerate = body.regenerate === true;
+  const editMessageId = typeof body.editMessageId === "string" ? body.editMessageId : null;
+  const editContent = typeof body.editContent === "string" ? body.editContent.trim().slice(0, MAX_MESSAGE_LENGTH) : "";
+  const isEdit = editMessageId !== null;
   const userMessage = typeof body.message === "string" ? body.message.trim().slice(0, MAX_MESSAGE_LENGTH) : "";
+  // explicitMode is controlled by the chat UI toggle. Any signed-in user may
+  // enable it for their private conversations — not limited to isExplicit characters.
+  const explicitMode = body.explicitMode === true;
+  const spiceLevel = explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
+  const roleplayStyle = explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
+  const sceneDirective =
+    typeof body.sceneDirective === "string" ? body.sceneDirective.trim().slice(0, 500) : undefined;
 
-  if (!isRegenerate && !userMessage) {
+  if (!isRegenerate && !isEdit && !userMessage && !sceneDirective) {
+    return res.status(400).json({ error: "Message can't be empty." });
+  }
+  if (isEdit && !editContent) {
     return res.status(400).json({ error: "Message can't be empty." });
   }
 
@@ -77,7 +99,30 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   }
 
   let regenTargetId: string | null = null;
-  if (isRegenerate) {
+  if (isEdit) {
+    const target = await prisma.message.findFirst({
+      where: { id: editMessageId as string, characterId, userId, role: "user" },
+    });
+    if (!target) {
+      return res.status(404).json({ error: "That message couldn't be found." });
+    }
+    // Messages already folded into memorySummary are gone from the working
+    // context, so editing one would silently do nothing useful — reject
+    // rather than pretend it worked.
+    const positionAmongAll = await prisma.message.count({
+      where: { characterId, userId, createdAt: { lte: target.createdAt } },
+    });
+    if (positionAmongAll <= character.summarizedThrough) {
+      return res.status(400).json({ error: "That message is too old to edit." });
+    }
+    // Standard "edit and resend" behavior: this message and everything
+    // after it (its old reply, and any later turns) is discarded, then a
+    // fresh reply is generated from the edited text.
+    await prisma.message.deleteMany({
+      where: { characterId, userId, createdAt: { gt: target.createdAt } },
+    });
+    await prisma.message.update({ where: { id: target.id }, data: { content: editContent } });
+  } else if (isRegenerate) {
     // "regenerate" covers two cases: redoing an existing reply (last message
     // is the assistant's — mark it for replacement), or retrying a turn
     // where every provider failed last time (last message is still the
@@ -90,7 +135,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       return res.status(400).json({ error: "Nothing to regenerate yet." });
     }
     if (last.role === "assistant") regenTargetId = last.id;
-  } else {
+  } else if (userMessage) {
     await prisma.message.create({
       data: { characterId, userId, role: "user", content: userMessage },
     });
@@ -107,7 +152,12 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     : allSinceSummary;
   const recentHistory = relevant.slice(-RECENT_MESSAGE_WINDOW);
 
-  const system = buildSystemPrompt(character);
+  const system = buildSystemPrompt(character, {
+    explicitMode,
+    spiceLevel,
+    roleplayStyle,
+    sceneDirective,
+  });
   const chatMessages = [
     { role: "system" as const, content: system },
     ...recentHistory.map((m: { role: string; content: string }) => ({
@@ -121,6 +171,14 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     "Cache-Control": "no-cache",
   });
 
+  // The frontend's "Stop" button aborts its fetch(), which closes this
+  // connection from the client side — surfaced here as the request stream
+  // closing early. Wiring that into an AbortSignal lets the fallback chain
+  // stop paying for tokens nobody will see, while still keeping (and
+  // saving) whatever text had already streamed out.
+  const stopController = new AbortController();
+  req.on("close", () => stopController.abort());
+
   try {
     const { text: fullText, provider } = await streamChatWithFallback(
       chatMessages,
@@ -132,7 +190,8 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
         // shouldn't be able to see which backend(s) power the chat, even by
         // reading the network tab. The toast on the client is generic.
         res.write(encodeEvent({ type: "failover" }));
-      }
+      },
+      stopController.signal
     );
 
     if (fullText.trim().length > 0) {
@@ -143,7 +202,13 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
         data: { characterId, userId, role: "assistant", content: fullText.trim() },
       });
     }
-    console.log(`[chat] reply generated via ${provider}`);
+    console.log(
+      stopController.signal.aborted
+        ? `[chat] reply stopped by client mid-stream (via ${provider})`
+        : `[chat] reply generated via ${provider}`
+    );
+    // If the client already disconnected, res.write/res.end below are
+    // harmless no-ops — the assistant text above is already saved.
     res.end();
 
     // Fire-and-forget: fold older messages into the running memory summary
@@ -151,9 +216,11 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     maybeSummarize(characterId, userId).catch((err) => console.error("summarize failed", err));
   } catch (err) {
     console.error(err);
-    res.write(
-      encodeEvent({ type: "fatal", message: "Every configured provider failed to respond. Please try again shortly." })
-    );
+    if (!stopController.signal.aborted) {
+      res.write(
+        encodeEvent({ type: "fatal", message: "Every configured provider failed to respond. Please try again shortly." })
+      );
+    }
     res.end();
   }
 }));
@@ -179,6 +246,127 @@ router.delete("/:characterId", asyncHandler(async (req, res) => {
   return res.json({ ok: true });
 }));
 
+// GET /api/chat/:characterId/memory — the running memory summary + how much
+// of the conversation it currently represents, for the "what I remember"
+// panel. NOTE: registered before GET "/:characterId" isn't required here
+// since Express matches by segment count, but keep both routes together for
+// readability.
+router.get("/:characterId/memory", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const { characterId } = req.params;
+  const character = await prisma.character.findUnique({ where: { id: characterId } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const totalMessages = await prisma.message.count({ where: { characterId, userId } });
+
+  return res.json({
+    memorySummary: character.memorySummary,
+    summarizedThrough: character.summarizedThrough,
+    totalMessages,
+  });
+}));
+
+// PUT /api/chat/:characterId/memory — either edit the memory text directly
+// (the user correcting/curating what's remembered), or forget it entirely.
+// "Forget" can't just reset summarizedThrough to 0, or the next
+// summarization pass would re-read all the old messages and regenerate the
+// exact memory the user just asked to erase — so it's marked as already
+// fully accounted-for instead, at today's message count.
+router.put("/:characterId/memory", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const { characterId } = req.params;
+  const character = await prisma.character.findUnique({ where: { id: characterId } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const body = req.body ?? {};
+  if (body.forget === true) {
+    const totalMessages = await prisma.message.count({ where: { characterId, userId } });
+    const updated = await prisma.character.update({
+      where: { id: characterId },
+      data: { memorySummary: "", summarizedThrough: totalMessages },
+    });
+    return res.json({ memorySummary: updated.memorySummary, summarizedThrough: updated.summarizedThrough });
+  }
+
+  const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.trim().slice(0, 4000) : null;
+  if (memorySummary === null) {
+    return res.status(400).json({ error: "memorySummary must be a string." });
+  }
+  const updated = await prisma.character.update({
+    where: { id: characterId },
+    data: { memorySummary },
+  });
+  return res.json({ memorySummary: updated.memorySummary, summarizedThrough: updated.summarizedThrough });
+}));
+
+const GROQ_TTS_TIMEOUT_MS = Number(process.env.GROQ_TTS_TIMEOUT_SECONDS || "20") * 1000;
+const MAX_SPEECH_INPUT_CHARS = 2000; // caps how much of a long reply we'll ever synthesize in one request
+
+// POST /api/chat/:characterId/speak — text-to-speech for a message, using
+// Groq's Orpheus TTS (same GROQ_API_KEY as chat; no separate key needed).
+// Orpheus caps input at 200 characters per call, so longer text is split on
+// sentence boundaries and the resulting WAV clips are stitched into one file.
+router.post("/:characterId/speak", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const { characterId } = req.params;
+  const character = await prisma.character.findUnique({ where: { id: characterId } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  if (!isGroqConfigured()) {
+    return res.status(400).json({
+      error: "Voice playback needs a GROQ_API_KEY set in .env (Groq is currently the only configured TTS provider).",
+    });
+  }
+
+  const limit = checkRateLimit(`speak:${userId}`, 20, 60);
+  if (limit.limited) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many voice requests. Please slow down a bit." });
+  }
+
+  const body = req.body ?? {};
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, MAX_SPEECH_INPUT_CHARS) : "";
+  if (!text) {
+    return res.status(400).json({ error: "No text to speak." });
+  }
+  const requestedVoice = typeof body.voice === "string" ? body.voice : undefined;
+  const voice: TtsVoice = (TTS_VOICES as readonly string[]).includes(requestedVoice ?? "")
+    ? (requestedVoice as TtsVoice)
+    : "hannah";
+
+  const apiKey = getGroqKeys()[0]?.key;
+  if (!apiKey) {
+    return res.status(400).json({ error: "Voice playback needs a GROQ_API_KEY set in .env." });
+  }
+
+  const chunks = splitForSpeech(text);
+  try {
+    const buffers: Buffer[] = [];
+    for (const chunk of chunks) {
+      buffers.push(await synthesizeGroqSpeech(chunk, voice, apiKey, GROQ_TTS_TIMEOUT_MS));
+    }
+    const combined = concatWavBuffers(buffers);
+    res.set("Content-Type", "audio/wav");
+    res.set("Cache-Control", "no-store");
+    return res.send(combined);
+  } catch (err) {
+    console.error("[chat] TTS synthesis failed:", err);
+    return res.status(502).json({ error: "Couldn't generate audio right now. Please try again." });
+  }
+}));
+
 async function maybeSummarize(characterId: string, userId: string) {
   const character = await prisma.character.findUnique({ where: { id: characterId } });
   if (!character) return;
@@ -198,7 +386,12 @@ async function maybeSummarize(characterId: string, userId: string) {
   });
   if (toFold.length === 0) return;
 
-  const updatedSummary = await summarizeConversation(character, character.memorySummary, toFold);
+  const updatedSummary = await summarizeConversation(
+    character,
+    character.memorySummary,
+    toFold,
+    character.isExplicit
+  );
 
   await prisma.character.update({
     where: { id: characterId },

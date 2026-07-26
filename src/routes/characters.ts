@@ -2,14 +2,68 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
+import { checkRateLimit } from "../lib/rateLimit";
+import { draftCharacterWithFallback, listAvailableProviders } from "../lib/providers";
 
 const router = Router();
 
 const MAX_FIELD_LENGTH = 1200;
+const MAX_IMPORT_BATCH = 50;
 
 function clean(value: unknown, fallback = "") {
   if (typeof value !== "string") return fallback;
   return value.trim().slice(0, MAX_FIELD_LENGTH);
+}
+
+type CharacterInput = {
+  name: string;
+  tagline: string;
+  personality: string;
+  backstory: string;
+  greeting: string;
+  avatarEmoji: string;
+  accentColor: string;
+  isExplicit: boolean;
+  isPublic: boolean;
+  roleplayNotes: string;
+};
+
+function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: string } {
+  if (typeof body !== "object" || body === null) {
+    return { error: "Each entry must be an object." };
+  }
+  const raw = body as Record<string, unknown>;
+  const name = clean(raw.name);
+  const tagline = clean(raw.tagline);
+  const personality = clean(raw.personality);
+  const backstory = clean(raw.backstory);
+  const greeting = clean(raw.greeting);
+  const avatarEmoji = clean(raw.avatarEmoji, "🌸").slice(0, 8) || "🌸";
+  const accentColor = /^#[0-9a-fA-F]{6}$/.test(String(raw.accentColor ?? ""))
+    ? String(raw.accentColor)
+    : "#c9a227";
+  const isExplicit = raw.isExplicit === true;
+  const isPublic = raw.isPublic === true && !isExplicit;
+  const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
+
+  if (!name || !personality || !backstory || !greeting) {
+    return { error: "Name, personality, backstory, and greeting are all required." };
+  }
+
+  return {
+    data: {
+      name,
+      tagline,
+      personality,
+      backstory,
+      greeting,
+      avatarEmoji,
+      accentColor,
+      isExplicit,
+      isPublic,
+      roleplayNotes,
+    },
+  };
 }
 
 async function loadOwnedCharacter(id: string, userId: string) {
@@ -26,32 +80,164 @@ router.get("/", asyncHandler(async (req, res) => {
     where: { ownerId: userId },
     orderBy: { createdAt: "desc" },
   });
-  return res.json({ characters });
+
+  type LatestRow = { characterId: string; content: string; role: string; createdAt: Date };
+
+  // One row per character: its single most recent message (if any), so the
+  // dashboard can show a preview + "last active" time without an N+1 query
+  // per card.
+  const latest: LatestRow[] = await prisma.$queryRaw`
+    SELECT DISTINCT ON ("characterId") "characterId", "content", "role", "createdAt"
+    FROM "Message"
+    WHERE "userId" = ${userId}
+    ORDER BY "characterId", "createdAt" DESC
+  `;
+  const latestByCharacter = new Map<string, LatestRow>(latest.map((m: LatestRow) => [m.characterId, m]));
+
+  const enriched = characters.map((c: any) => {
+    const last = latestByCharacter.get(c.id);
+    return {
+      ...c,
+      lastMessagePreview: last?.content ?? null,
+      lastMessageRole: last?.role ?? null,
+      lastActivityAt: last?.createdAt ?? c.createdAt,
+    };
+  });
+
+  // Most recently active conversation first; characters with no messages
+  // yet fall back to their creation time, so brand-new ones still show up
+  // near the top rather than sorting as if long-forgotten.
+  enriched.sort(
+    (a: { lastActivityAt: Date }, b: { lastActivityAt: Date }) =>
+      new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()
+  );
+
+  return res.json({ characters: enriched });
 }));
+
+// Sharing to the public Discover gallery requires a verified email address —
+// it's the one place in the app where a stranger's content reaches other
+// users, so we want at least that much confidence in who published it.
+async function enforceVerifiedForPublic(userId: string, isPublic: boolean): Promise<string | null> {
+  if (!isPublic) return null;
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { emailVerified: true } });
+  if (!user?.emailVerified) {
+    return "Verify your email before sharing a character to Discover. Check your inbox, or resend the link from your account.";
+  }
+  return null;
+}
 
 router.post("/", asyncHandler(async (req, res) => {
   const userId = await getCurrentUserId(req);
   if (!userId) return res.status(401).json({ error: "Not signed in." });
 
-  const body = req.body ?? {};
-  const name = clean(body.name);
-  const tagline = clean(body.tagline);
-  const personality = clean(body.personality);
-  const backstory = clean(body.backstory);
-  const greeting = clean(body.greeting);
-  const avatarEmoji = clean(body.avatarEmoji, "🌸").slice(0, 8) || "🌸";
-  const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : "#c9a227";
-  const isExplicit = body.isExplicit === true;
-
-  if (!name || !personality || !backstory || !greeting) {
-    return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
+  const parsed = parseCharacterInput(req.body ?? {});
+  if (!parsed.data) {
+    return res.status(400).json({ error: parsed.error });
   }
 
+  const verifyError = await enforceVerifiedForPublic(userId, parsed.data.isPublic);
+  if (verifyError) return res.status(403).json({ error: verifyError });
+
   const character = await prisma.character.create({
-    data: { ownerId: userId, name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit },
+    data: { ownerId: userId, ...parsed.data },
   });
 
   return res.json({ character });
+}));
+
+// POST /api/characters/draft — turn a one-line idea into a full character
+// draft (name/tagline/personality/backstory/greeting) for the user to review
+// before creating. Uses the same free-tier provider chain as chat.
+router.post("/draft", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const limit = checkRateLimit(`draft:${userId}`, 10, 60);
+  if (limit.limited) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many draft requests. Please slow down a bit." });
+  }
+
+  const idea = typeof req.body?.idea === "string" ? req.body.idea.trim().slice(0, 300) : "";
+  const allowExplicit = req.body?.allowExplicit === true;
+  if (!idea) {
+    return res.status(400).json({ error: "Describe your character idea in a sentence first." });
+  }
+
+  const available = await listAvailableProviders();
+  if (available.length === 0) {
+    return res.status(502).json({
+      error: "No chat provider is available to draft a character right now. Fill in the form yourself instead.",
+    });
+  }
+
+  try {
+    const draft = await draftCharacterWithFallback(idea, allowExplicit);
+    return res.json({ draft });
+  } catch (err) {
+    console.error(err);
+    return res.status(502).json({
+      error: "Couldn't draft a character right now. Try again, or fill in the form yourself.",
+    });
+  }
+}));
+
+// POST /api/characters/import — bulk-create characters from a JSON array
+router.post("/import", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const limit = checkRateLimit(`import:${userId}`, 5, 60);
+  if (limit.limited) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many import requests. Please slow down a bit." });
+  }
+
+  const raw = req.body?.characters;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return res.status(400).json({ error: "Send a non-empty characters array." });
+  }
+  if (raw.length > MAX_IMPORT_BATCH) {
+    return res.status(400).json({ error: `Import at most ${MAX_IMPORT_BATCH} characters at once.` });
+  }
+
+  const created: Awaited<ReturnType<typeof prisma.character.create>>[] = [];
+  const errors: { index: number; name: string; error: string }[] = [];
+
+  for (let i = 0; i < raw.length; i++) {
+    const parsed = parseCharacterInput(raw[i]);
+    if (!parsed.data) {
+      errors.push({ index: i, name: clean((raw[i] as Record<string, unknown>)?.name), error: parsed.error ?? "Invalid entry." });
+      continue;
+    }
+    const character = await prisma.character.create({
+      data: { ownerId: userId, ...parsed.data },
+    });
+    created.push(character);
+  }
+
+  return res.json({ imported: created.length, characters: created, errors });
+}));
+
+// GET /api/characters/discover — public gallery of characters shared by any
+// user. Explicit characters are never included here (enforced when a
+// character is made public, not just at read time, but double-checked here
+// too as defense in depth).
+// NOTE: this must be registered before GET "/:id" below, or Express will
+// treat "discover" as an :id and this route will never be reached.
+router.get("/discover", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const characters = await prisma.character.findMany({
+    where: { isPublic: true, isExplicit: false, isHidden: false },
+    orderBy: { createdAt: "desc" },
+    take: 60,
+    include: { owner: { select: { displayName: true } } },
+  });
+
+  return res.json({ characters });
 }));
 
 router.get("/:id", asyncHandler(async (req, res) => {
@@ -80,14 +266,24 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const avatarEmoji = clean(body.avatarEmoji, existing.avatarEmoji).slice(0, 8) || existing.avatarEmoji;
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : existing.accentColor;
   const isExplicit = typeof body.isExplicit === "boolean" ? body.isExplicit : existing.isExplicit;
+  const requestedPublic = typeof body.isPublic === "boolean" ? body.isPublic : existing.isPublic;
+  const isPublic = requestedPublic && !isExplicit;
+  const roleplayNotes = isExplicit
+    ? clean(body.roleplayNotes, existing.roleplayNotes ?? "")
+    : "";
 
   if (!name || !personality || !backstory || !greeting) {
     return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
   }
 
+  if (isPublic && !existing.isPublic) {
+    const verifyError = await enforceVerifiedForPublic(userId, true);
+    if (verifyError) return res.status(403).json({ error: verifyError });
+  }
+
   const character = await prisma.character.update({
     where: { id: req.params.id },
-    data: { name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit },
+    data: { name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit, isPublic, roleplayNotes },
   });
 
   return res.json({ character });
@@ -102,6 +298,37 @@ router.delete("/:id", asyncHandler(async (req, res) => {
 
   await prisma.character.delete({ where: { id: req.params.id } });
   return res.json({ ok: true });
+}));
+
+// POST /api/characters/:id/remix — clone a public character into the
+// requesting user's own collection so they can chat with and edit their own
+// copy. The original stays untouched and owned by whoever shared it.
+router.post("/:id/remix", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const source = await prisma.character.findUnique({ where: { id: req.params.id } });
+  if (!source || !source.isPublic || source.isExplicit || source.isHidden) {
+    return res.status(404).json({ error: "That character isn't available to remix." });
+  }
+
+  const character = await prisma.character.create({
+    data: {
+      ownerId: userId,
+      name: source.name,
+      tagline: source.tagline,
+      personality: source.personality,
+      backstory: source.backstory,
+      greeting: source.greeting,
+      avatarEmoji: source.avatarEmoji,
+      avatarUrl: source.avatarUrl,
+      accentColor: source.accentColor,
+      isExplicit: false,
+      isPublic: false, // the remix starts private; the user can choose to share their own copy later
+    },
+  });
+
+  return res.json({ character });
 }));
 
 export default router;

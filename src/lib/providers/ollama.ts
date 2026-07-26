@@ -21,10 +21,21 @@ export async function isOllamaAvailable(): Promise<boolean> {
 export async function streamOllamaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
-  timeoutMs: number
+  timeoutMs: number,
+  clientSignal?: AbortSignal
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
+  // See openaiCompatible.ts — same client-stop vs. provider-timeout distinction.
+  let clientAborted = clientSignal?.aborted ?? false;
+  const onClientAbort = () => {
+    clientAborted = true;
+    controller.abort();
+  };
+  if (clientSignal) {
+    if (clientSignal.aborted) controller.abort();
+    else clientSignal.addEventListener("abort", onClientAbort);
+  }
   const timer = setTimeout(() => {
     if (!firstTokenReceived) controller.abort();
   }, timeoutMs);
@@ -39,6 +50,7 @@ export async function streamOllamaChat(
         signal: controller.signal,
       });
     } catch (err) {
+      if (clientAborted) return "";
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new Error(`Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
       }
@@ -60,6 +72,7 @@ export async function streamOllamaChat(
       try {
         chunk = await reader.read();
       } catch (err) {
+        if (clientAborted) return fullText;
         if (err instanceof DOMException && err.name === "AbortError") {
           throw new Error(`Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
         }
@@ -91,11 +104,13 @@ export async function streamOllamaChat(
           onToken(token);
         }
       }
+      if (clientAborted) return fullText;
     }
 
     return fullText;
   } finally {
     clearTimeout(timer);
+    if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);
   }
 }
 

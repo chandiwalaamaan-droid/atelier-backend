@@ -2,13 +2,17 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import cron from "node-cron";
 import path from "path";
 
+import { runRetentionCleanup } from "./jobs/retentionCleanup";
 import authRoutes from "./routes/auth";
 import characterRoutes from "./routes/characters";
 import avatarRoutes from "./routes/avatar";
 import chatRoutes from "./routes/chat";
 import healthRoutes from "./routes/health";
+import moderationRoutes from "./routes/moderation";
+import billingRoutes, { handleWebhook } from "./routes/billing";
 
 const app = express();
 
@@ -34,6 +38,21 @@ app.use(
 );
 
 app.use(cookieParser());
+
+// Razorpay webhook signature verification needs the exact raw request
+// bytes, so this one route is registered with express.raw() ahead of the
+// global express.json() below — parsing it as JSON first would leave
+// nothing for the signature check to hash. See routes/billing.ts for the
+// verification logic (a no-op response until PAYMENTS_ENABLED is set).
+app.post("/api/billing/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const signature = req.headers["x-razorpay-signature"];
+  const result = await handleWebhook(
+    req.body as Buffer,
+    typeof signature === "string" ? signature : undefined
+  );
+  res.sendStatus(result.status);
+});
+
 app.use(express.json({ limit: "2mb" }));
 
 // Avatar image uploads written to disk by routes/avatar.ts — served back out
@@ -46,6 +65,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/characters", characterRoutes);
 app.use("/api/characters", avatarRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api", moderationRoutes);
+app.use("/api/billing", billingRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
@@ -57,3 +78,14 @@ const PORT = Number(process.env.PORT || 4000);
 app.listen(PORT, () => {
   console.log(`[atelier-backend] listening on :${PORT}`);
 });
+
+// Daily sweep: warns users ~11 months inactive, anonymizes accounts inactive
+// a full year. Runs at 03:00 UTC (~8:30 AM IST) — low-traffic window.
+// See src/jobs/retentionCleanup.ts for the actual policy.
+if (process.env.DISABLE_RETENTION_CRON !== "true") {
+  cron.schedule("0 3 * * *", () => {
+    runRetentionCleanup().catch((err) => {
+      console.error("[retention] cleanup run failed", err);
+    });
+  });
+}

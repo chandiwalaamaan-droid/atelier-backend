@@ -57,6 +57,14 @@ export function checkRateLimit(key: string, maxRequests: number, windowSeconds: 
  * hosts, sits behind a proxy that sets x-forwarded-for). Falls back to a
  * constant if nothing is present — meaning everyone with no header shares
  * one bucket, which is still strictly safer than no rate limiting at all.
+ *
+ * Trust caveat: this takes the leftmost x-forwarded-for entry at face value,
+ * which is only safe because Render's edge proxy sets/overwrites this header
+ * itself rather than appending to whatever the client sent. If this app is
+ * ever deployed behind a different/additional proxy, confirm that proxy
+ * sanitizes (not appends to) an inbound X-Forwarded-For before trusting it
+ * here — otherwise a client could spoof the header and land in a
+ * different rate-limit bucket than they're actually in.
  */
 export function getClientIp(req: { headers: Record<string, unknown> }): string {
   const forwardedRaw = req.headers["x-forwarded-for"];

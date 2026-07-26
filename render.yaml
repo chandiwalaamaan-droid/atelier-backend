@@ -4,10 +4,10 @@ services:
     runtime: node
     plan: free
     healthCheckPath: /api/health
-    # Same reasoning as the original combined app: no committed migrations/
-    # folder, so `prisma db push` (not `migrate deploy`) matches the schema
-    # straight to the DB on every deploy.
-    buildCommand: "npm install && npx prisma db push && npm run build"
+    # prisma/migrations/ is committed (see 0_initial_schema/), so deploys
+    # apply tracked migrations in order via `migrate deploy` rather than
+    # `db push`, which would silently ignore the migration history table.
+    buildCommand: "npm install && npx prisma migrate deploy && npm run build"
     startCommand: "npm run start"
     disk:
       # Avatar uploads are written to public/uploads/avatars on local disk
@@ -18,9 +18,7 @@ services:
       sizeGB: 1
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: atelier-db
-          property: connectionString
+        sync: false # set this to your CockroachDB Serverless connection string in the Render dashboard
       - key: SESSION_SECRET
         generateValue: true
       # Set this to your Netlify site URL(s) after the frontend is deployed,
@@ -48,7 +46,18 @@ services:
         sync: false
       - key: NODE_ENV
         value: "production"
+      # Billing (Razorpay) — everything in src/routes/billing.ts 503s unless
+      # this is exactly "true", regardless of whether the keys below are
+      # set. Leave it "false" until you're actually ready to take payments;
+      # see src/lib/payments/razorpay.ts for the full rundown.
+      - key: PAYMENTS_ENABLED
+        value: "false"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      # Optional: only needed if you configure a webhook in the Razorpay
+      # dashboard (Settings → Webhooks) pointed at /api/billing/webhook.
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
 
-databases:
-  - name: atelier-db
-    plan: free
