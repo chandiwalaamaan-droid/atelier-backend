@@ -51,19 +51,15 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 CREATE INDEX "Message_characterId_userId_createdAt_idx" ON "Message"("characterId", "userId", "createdAt");
 
 -- CockroachDB (v26.2+) creates new tables with schema_locked = true by
--- default (a changefeed-performance optimization) — that blocks the
--- ALTER TABLE ... ADD CONSTRAINT statements below in the same migration.
--- Left unlocked permanently rather than re-locked, since later migrations
--- keep adding columns/constraints to these same tables.
+-- default (a changefeed-performance optimization). Prisma runs this whole
+-- file in one transaction, and CockroachDB doesn't apply schema changes
+-- within a transaction atomically — so an unlock here would NOT be visible
+-- to an ADD CONSTRAINT later in this same file. Unlocking is done here;
+-- the ADD CONSTRAINT statements live in the follow-up
+-- 0_initial_schema_fk migration instead, which runs as its own separate
+-- transaction after this one has fully committed. Left unlocked
+-- permanently rather than re-locked, since later migrations keep adding
+-- columns/constraints to these same tables.
 ALTER TABLE "Character" SET (schema_locked = false);
 ALTER TABLE "User" SET (schema_locked = false);
 ALTER TABLE "Message" SET (schema_locked = false);
-
--- AddForeignKey
-ALTER TABLE "Character" ADD CONSTRAINT "Character_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Message" ADD CONSTRAINT "Message_characterId_fkey" FOREIGN KEY ("characterId") REFERENCES "Character"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Message" ADD CONSTRAINT "Message_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

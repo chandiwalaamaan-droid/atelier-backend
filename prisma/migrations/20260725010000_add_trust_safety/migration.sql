@@ -1,5 +1,13 @@
 -- Trust & safety: age gate + ToS acceptance, email verification, password
 -- reset, and Discover moderation (reports + auto-hide).
+--
+-- FK constraints for the three new tables below live in the follow-up
+-- 20260725010000_add_trust_safety_fk migration instead of inline here:
+-- CockroachDB creates new tables with schema_locked = true by default, and
+-- since Prisma runs this whole file as one transaction, an unlock here
+-- wouldn't be visible to an ADD CONSTRAINT later in the same transaction.
+-- Splitting into two migrations means the unlock is fully committed before
+-- the FK migration runs.
 
 -- ── User: age gate / ToS / email verification ──────────────────────────
 -- Added as nullable first so this doesn't break on existing rows, backfilled
@@ -36,14 +44,6 @@ CREATE TABLE "PasswordResetToken" (
 CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
 CREATE INDEX "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
 
--- Newly created tables default to schema_locked = true on this CockroachDB
--- version, which blocks the ADD CONSTRAINT below.
-ALTER TABLE "PasswordResetToken" SET (schema_locked = false);
-
-ALTER TABLE "PasswordResetToken"
-    ADD CONSTRAINT "PasswordResetToken_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
 -- ── EmailVerificationToken ───────────────────────────────────────────────
 CREATE TABLE "EmailVerificationToken" (
     "id" TEXT NOT NULL,
@@ -57,12 +57,6 @@ CREATE TABLE "EmailVerificationToken" (
 
 CREATE UNIQUE INDEX "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken"("tokenHash");
 CREATE INDEX "EmailVerificationToken_userId_idx" ON "EmailVerificationToken"("userId");
-
-ALTER TABLE "EmailVerificationToken" SET (schema_locked = false);
-
-ALTER TABLE "EmailVerificationToken"
-    ADD CONSTRAINT "EmailVerificationToken_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- ── Report ────────────────────────────────────────────────────────────
 CREATE TABLE "Report" (
@@ -80,12 +74,8 @@ CREATE TABLE "Report" (
 CREATE INDEX "Report_characterId_idx" ON "Report"("characterId");
 CREATE INDEX "Report_status_idx" ON "Report"("status");
 
+-- Unlock the three new tables (see note at the top of this file) so the
+-- follow-up _fk migration can add their FK constraints.
+ALTER TABLE "PasswordResetToken" SET (schema_locked = false);
+ALTER TABLE "EmailVerificationToken" SET (schema_locked = false);
 ALTER TABLE "Report" SET (schema_locked = false);
-
-ALTER TABLE "Report"
-    ADD CONSTRAINT "Report_characterId_fkey"
-    FOREIGN KEY ("characterId") REFERENCES "Character"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
-ALTER TABLE "Report"
-    ADD CONSTRAINT "Report_reporterId_fkey"
-    FOREIGN KEY ("reporterId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

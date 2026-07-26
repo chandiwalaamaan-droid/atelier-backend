@@ -1,6 +1,11 @@
 -- Billing (Razorpay) scaffolding. Additive only, defaults keep every
 -- existing row unaffected, and the app doesn't call any of this until
 -- PAYMENTS_ENABLED=true is set (see src/lib/payments/razorpay.ts).
+--
+-- The FK constraint for PaymentOrder lives in the follow-up
+-- 20260725130000_add_billing_fk migration instead of inline here: see the
+-- note in 0_initial_schema/migration.sql for why (schema_locked + single-
+-- transaction migrations don't mix on CockroachDB).
 
 -- ── User: spark balance + membership state ───────────────────────────────
 ALTER TABLE "User" ADD COLUMN "sparkBalance" INTEGER NOT NULL DEFAULT 0;
@@ -29,8 +34,5 @@ CREATE UNIQUE INDEX "PaymentOrder_razorpayOrderId_key" ON "PaymentOrder"("razorp
 CREATE INDEX "PaymentOrder_userId_idx" ON "PaymentOrder"("userId");
 CREATE INDEX "PaymentOrder_razorpayOrderId_idx" ON "PaymentOrder"("razorpayOrderId");
 
+-- Unlock so the follow-up _fk migration can add the FK constraint.
 ALTER TABLE "PaymentOrder" SET (schema_locked = false);
-
-ALTER TABLE "PaymentOrder"
-    ADD CONSTRAINT "PaymentOrder_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
