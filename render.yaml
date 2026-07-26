@@ -7,7 +7,7 @@ services:
     # prisma/migrations/ is committed (see 0_initial_schema/), so deploys
     # apply tracked migrations in order via `migrate deploy` rather than
     # `db push`, which would silently ignore the migration history table.
-    buildCommand: "npm install && npx prisma migrate deploy && npm run build"
+    buildCommand: "npm ci && npx prisma migrate deploy && npm run build"
     startCommand: "npm run start"
     envVars:
       - key: DATABASE_URL
