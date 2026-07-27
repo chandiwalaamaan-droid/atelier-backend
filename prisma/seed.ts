@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -31,7 +32,6 @@ async function main() {
   });
 
   if (!seedUser) {
-    const bcrypt = await import("bcryptjs");
     seedUser = await prisma.user.create({
       data: {
         email: "seed@atelier.local",
