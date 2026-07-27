@@ -11,6 +11,7 @@ model User {
   id                  String      @id @default(uuid())
   email               String      @unique
   passwordHash        String
+  googleId            String?     @unique // set once this account is linked to "Sign in with Google"
   displayName         String
   birthdate           DateTime // self-reported DOB, checked at signup to require 18+
   tosAcceptedAt       DateTime // when the user accepted the Terms of Service / content policy

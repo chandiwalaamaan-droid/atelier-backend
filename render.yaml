@@ -14,6 +14,13 @@ services:
         sync: false # set this to your CockroachDB Serverless connection string in the Render dashboard
       - key: SESSION_SECRET
         generateValue: true
+      # "Sign in with Google" — OAuth 2.0 Client ID (type "Web application")
+      # from Google Cloud Console > APIs & Services > Credentials. Add both
+      # https://<your-netlify-site>.netlify.app AND this backend's Render
+      # URL under "Authorized JavaScript origins" on that same credential.
+      # No client secret needed — this only verifies ID tokens.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
       # Set this to your Netlify site URL(s) after the frontend is deployed,
       # comma-separated if you have more than one (prod + deploy previews).
       # e.g. "https://your-site.netlify.app"
