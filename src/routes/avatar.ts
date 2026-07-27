@@ -209,10 +209,12 @@ async function isBlankOrBlockedImage(bytes: Buffer): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Enhanced image-gen fallback chain: HF -> Pollinations -> Cloudflare.
+// Enhanced image-gen fallback chain: Hugging Face -> Pollinations -> Cloudflare.
 // Each provider's output is checked for blank/safety-filtered results (see
 // isBlankOrBlockedImage above) before being accepted — a blank image counts
 // as a failure and moves on to the next provider, same as a thrown error.
+// Set HUGGINGFACE_API_KEY to use HF as the primary provider; otherwise
+// Pollinations (keyless) is used first.
 // ---------------------------------------------------------------------------
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
@@ -221,7 +223,22 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Try Pollinations first (unrestricted mode for explicit personas, keyless)
+  // Try Hugging Face first if configured (primary provider)
+  if (isHuggingFaceConfigured()) {
+    try {
+      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Hugging Face failed, falling back to Pollinations:", msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
+  // Fallback to Pollinations (unrestricted mode for explicit personas, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -232,23 +249,8 @@ async function generateAvatarImage(
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Hugging Face:", msg);
+    console.warn("[avatar] Pollinations failed, falling back to Cloudflare:", msg);
     errors.push(`pollinations: ${msg}`);
-  }
-
-  // Fallback to Hugging Face if configured
-  if (isHuggingFaceConfigured()) {
-    try {
-      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Hugging Face failed, falling back to Cloudflare:", msg);
-      errors.push(`huggingface: ${msg}`);
-    }
   }
 
   // Final fallback: Cloudflare Workers AI
@@ -296,21 +298,7 @@ async function generateSceneImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Pollinations first (unrestricted mode, exact width/height, keyless)
-  try {
-    const bytes = await withPollinationsRetry(() =>
-      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
-    );
-    if (await isBlankOrBlockedImage(bytes)) {
-      throw new Error("returned a blank/blocked image (likely safety filter)");
-    }
-    return { bytes, provider: "pollinations" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`pollinations: ${msg}`);
-  }
-
-  // Hugging Face second (open model, no content policy)
+  // Hugging Face first (open model, no content policy)
   if (isHuggingFaceConfigured()) {
     try {
       const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
@@ -322,6 +310,20 @@ async function generateSceneImage(
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`huggingface: ${msg}`);
     }
+  }
+
+  // Pollinations second (unrestricted mode, exact width/height, keyless)
+  try {
+    const bytes = await withPollinationsRetry(() =>
+      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
+    );
+    if (await isBlankOrBlockedImage(bytes)) {
+      throw new Error("returned a blank/blocked image (likely safety filter)");
+    }
+    return { bytes, provider: "pollinations" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errors.push(`pollinations: ${msg}`);
   }
 
   // Final fallback: Cloudflare Workers AI. Note this ignores width/height
