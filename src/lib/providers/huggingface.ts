@@ -29,7 +29,7 @@ export async function generateHuggingFaceImage(
   if (!apiKey) throw new Error("HUGGINGFACE_API_KEY not set");
 
   const model = process.env.HUGGINGFACE_IMAGE_MODEL || DEFAULT_MODEL;
-  const url = `https://api-inference.huggingface.co/models/${model}`;
+  const url = `https://router.huggingface.co/hf-inference/models/${model}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
