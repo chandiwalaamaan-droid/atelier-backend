@@ -6,7 +6,7 @@ import { getCurrentUserId } from "../lib/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/cloudinary";
-import { generateHuggingFaceImage, isHuggingFaceConfigured } from "../lib/providers/huggingface";
+import { isTensorArtConfigured, generateTensorArtImage } from "../lib/providers/tensorart";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
 
 // In-memory cache for recently generated images (keyed by prompt hash)
@@ -209,12 +209,12 @@ async function isBlankOrBlockedImage(bytes: Buffer): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Enhanced image-gen fallback chain: Hugging Face -> Pollinations -> Cloudflare.
+// Enhanced image-gen fallback chain: Tensor.Art -> Pollinations -> Cloudflare.
 // Each provider's output is checked for blank/safety-filtered results (see
 // isBlankOrBlockedImage above) before being accepted — a blank image counts
 // as a failure and moves on to the next provider, same as a thrown error.
-// Set HUGGINGFACE_API_KEY to use HF as the primary provider; otherwise
-// Pollinations (keyless) is used first.
+// Set TENSOR_ART_API_KEY to use Tensor.Art as primary; otherwise Pollinations
+// (keyless) is used first.
 // ---------------------------------------------------------------------------
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
@@ -223,22 +223,22 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Try Hugging Face first if configured (primary provider)
-  if (isHuggingFaceConfigured()) {
+  // Try Tensor.Art first (free API key, uncensored)
+  if (isTensorArtConfigured()) {
     try {
-      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      const bytes = await generateTensorArtImage(prompt, 1024, 1024, timeoutMs);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
-      return { bytes, provider: "huggingface" };
+      return { bytes, provider: "tensorart" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Hugging Face failed, falling back to Pollinations:", msg);
-      errors.push(`huggingface: ${msg}`);
+      console.warn("[avatar] Tensor.Art failed, falling back to Pollinations:", msg);
+      errors.push(`tensorart: ${msg}`);
     }
   }
 
-  // Fallback to Pollinations (unrestricted mode for explicit personas, keyless)
+  // Fallback to Pollinations (free, keyless, uncensored, Flux-backed)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -298,17 +298,17 @@ async function generateSceneImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Hugging Face first (open model, no content policy)
-  if (isHuggingFaceConfigured()) {
+  // Tensor.Art first (free API key, uncensored)
+  if (isTensorArtConfigured()) {
     try {
-      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
+      const bytes = await generateTensorArtImage(prompt, width, height, timeoutMs);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
-      return { bytes, provider: "huggingface" };
+      return { bytes, provider: "tensorart" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`huggingface: ${msg}`);
+      errors.push(`tensorart: ${msg}`);
     }
   }
 
