@@ -221,22 +221,7 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Try Hugging Face first if configured
-  if (isHuggingFaceConfigured()) {
-    try {
-      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Hugging Face failed, falling back to Pollinations:", msg);
-      errors.push(`huggingface: ${msg}`);
-    }
-  }
-
-  // Fallback to Pollinations (unrestricted mode for explicit personas, keyless)
+  // Try Pollinations first (unrestricted mode for explicit personas, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -247,8 +232,23 @@ async function generateAvatarImage(
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Cloudflare:", msg);
+    console.warn("[avatar] Pollinations failed, falling back to Hugging Face:", msg);
     errors.push(`pollinations: ${msg}`);
+  }
+
+  // Fallback to Hugging Face if configured
+  if (isHuggingFaceConfigured()) {
+    try {
+      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Hugging Face failed, falling back to Cloudflare:", msg);
+      errors.push(`huggingface: ${msg}`);
+    }
   }
 
   // Final fallback: Cloudflare Workers AI
@@ -296,21 +296,7 @@ async function generateSceneImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Hugging Face first (open model, no content policy)
-  if (isHuggingFaceConfigured()) {
-    try {
-      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`huggingface: ${msg}`);
-    }
-  }
-
-  // Pollinations second (unrestricted mode, exact width/height, keyless)
+  // Pollinations first (unrestricted mode, exact width/height, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
@@ -322,6 +308,20 @@ async function generateSceneImage(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errors.push(`pollinations: ${msg}`);
+  }
+
+  // Hugging Face second (open model, no content policy)
+  if (isHuggingFaceConfigured()) {
+    try {
+      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`huggingface: ${msg}`);
+    }
   }
 
   // Final fallback: Cloudflare Workers AI. Note this ignores width/height
@@ -353,7 +353,7 @@ async function generateHuggingFaceImageWithSize(
   const apiKey = process.env.HUGGINGFACE_API_KEY;
   if (!apiKey) throw new Error("HUGGINGFACE_API_KEY not set");
 
-  const model = process.env.HUGGINGFACE_IMAGE_MODEL || "stabilityai/stable-diffusion-xl-base-1.0";
+  const model = process.env.HUGGINGFACE_IMAGE_MODEL || "black-forest-labs/FLUX.1-schnell";
   const url = `https://router.huggingface.co/hf-inference/models/${model}`;
 
   const controller = new AbortController();
