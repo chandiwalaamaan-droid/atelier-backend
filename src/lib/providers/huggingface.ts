@@ -4,16 +4,18 @@
 // to enable this provider; if unset, it's simply skipped in the fallback
 // chain (see routes/avatar.ts).
 //
-// Model defaults to FLUX.1-dev: HF's hf-inference provider deprecated
-// FLUX.1-schnell (returns HTTP 410), so this is the current officially
-// supported text-to-image model on that provider as of mid-2026. Override
-// with HUGGINGFACE_IMAGE_MODEL if you want a different model, but note
-// gated/licensed models require accepting their terms on huggingface.co
-// with the same account before the token can use them, and not every model
-// is served by every provider — check
+// Model defaults to stable-diffusion-2-1: HF's hf-inference provider has
+// pulled FLUX entirely (both schnell and dev return HTTP 410 as of mid-2026,
+// apparently moved to paid third-party providers like fal-ai/replicate).
+// SD 2.1 is an older but stable model that's been on HF's free serverless
+// tier since 2022 and is still what HF's own SDK docs demo as the default
+// free-tier example. Override with HUGGINGFACE_IMAGE_MODEL if you want a
+// different model, but verify it's still live first — HF's free-tier
+// catalog has been shrinking, so don't assume a model listed in docs is
+// actually being served: check
 // https://huggingface.co/api/models?inference_provider=hf-inference&pipeline_tag=text-to-image
-// if you want to verify a model is currently live before switching.
-const DEFAULT_MODEL = "black-forest-labs/FLUX.1-dev";
+// before switching, and expect this to need occasional revisiting.
+const DEFAULT_MODEL = "stabilityai/stable-diffusion-2-1";
 
 export function isHuggingFaceConfigured(): boolean {
   return Boolean(process.env.HUGGINGFACE_API_KEY);

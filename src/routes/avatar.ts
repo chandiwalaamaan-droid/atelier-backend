@@ -353,7 +353,7 @@ async function generateHuggingFaceImageWithSize(
   const apiKey = process.env.HUGGINGFACE_API_KEY;
   if (!apiKey) throw new Error("HUGGINGFACE_API_KEY not set");
 
-  const model = process.env.HUGGINGFACE_IMAGE_MODEL || "black-forest-labs/FLUX.1-dev";
+  const model = process.env.HUGGINGFACE_IMAGE_MODEL || "stabilityai/stable-diffusion-2-1";
   const url = `https://router.huggingface.co/hf-inference/models/${model}`;
 
   const controller = new AbortController();
