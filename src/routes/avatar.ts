@@ -386,13 +386,17 @@ async function generateHuggingFaceImageWithSize(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`Hugging Face API error ${res.status}: ${errText.slice(0, 300)}`);
+    throw new Error(
+      `Hugging Face API error ${res.status} [model=${model}, url=${url}]: ${errText.slice(0, 300)}`
+    );
   }
 
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.startsWith("image/")) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`Hugging Face returned non-image response: ${errText.slice(0, 300)}`);
+    throw new Error(
+      `Hugging Face returned non-image response [model=${model}]: ${errText.slice(0, 300)}`
+    );
   }
 
   const arrayBuffer = await res.arrayBuffer();
