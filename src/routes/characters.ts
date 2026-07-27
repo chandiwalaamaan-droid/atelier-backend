@@ -202,8 +202,18 @@ router.post("/import", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Import at most ${MAX_IMPORT_BATCH} characters at once.` });
   }
 
+  // Same verified-email gate that POST / and PUT /:id enforce before a
+  // character can reach the public Discover gallery. Checked once up front
+  // (rather than per-item) since it depends only on the requesting user.
+  // Bulk import intentionally never hard-fails the whole batch over this —
+  // any entry requesting isPublic gets silently downgraded to private, same
+  // as how isExplicit already forces isPublic off, and the user is told so
+  // in the response instead of losing the rest of the batch.
+  const canPublish = !(await enforceVerifiedForPublic(userId, true));
+
   const created: Awaited<ReturnType<typeof prisma.character.create>>[] = [];
   const errors: { index: number; name: string; error: string }[] = [];
+  let downgradedForVerification = 0;
 
   for (let i = 0; i < raw.length; i++) {
     const parsed = parseCharacterInput(raw[i]);
@@ -211,13 +221,26 @@ router.post("/import", asyncHandler(async (req, res) => {
       errors.push({ index: i, name: clean((raw[i] as Record<string, unknown>)?.name), error: parsed.error ?? "Invalid entry." });
       continue;
     }
+    if (parsed.data.isPublic && !canPublish) {
+      parsed.data.isPublic = false;
+      downgradedForVerification++;
+    }
     const character = await prisma.character.create({
       data: { ownerId: userId, ...parsed.data },
     });
     created.push(character);
   }
 
-  return res.json({ imported: created.length, characters: created, errors });
+  return res.json({
+    imported: created.length,
+    characters: created,
+    errors,
+    ...(downgradedForVerification > 0
+      ? {
+          notice: `${downgradedForVerification} character(s) were imported as private instead of public — verify your email to share to Discover.`,
+        }
+      : {}),
+  });
 }));
 
 // GET /api/characters/discover — public gallery of characters shared by any
@@ -322,6 +345,7 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
       greeting: source.greeting,
       avatarEmoji: source.avatarEmoji,
       avatarUrl: source.avatarUrl,
+      backgroundUrl: source.backgroundUrl,
       accentColor: source.accentColor,
       isExplicit: false,
       isPublic: false, // the remix starts private; the user can choose to share their own copy later

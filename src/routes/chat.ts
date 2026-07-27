@@ -168,7 +168,8 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
 
   res.set({
     "Content-Type": "text/plain; charset=utf-8",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
   });
 
   // The frontend's "Stop" button aborts its fetch(), which closes this

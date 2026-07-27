@@ -90,6 +90,7 @@ model Character {
   tagline            String
   avatarEmoji        String    @default("🌸")
   avatarUrl          String? // path under /uploads if an image avatar was set
+  backgroundUrl      String? // AI-generated or uploaded background/wallpaper image for the chat interface
   accentColor        String    @default("#c9a227")
   personality        String // short trait list, shown to the user
   backstory          String // longer context, injected into the model prompt

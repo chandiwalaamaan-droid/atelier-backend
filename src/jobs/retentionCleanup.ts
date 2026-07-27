@@ -87,7 +87,7 @@ async function anonymizeInactiveAccounts() {
           where: { id: user.id },
           data: {
             email: `deleted-${user.id}@atelier.invalid`,
-            passwordHash: "",
+            passwordHash: "DELETED_ACCOUNT",
             displayName: "Deleted user",
             emailVerified: false,
             sparkBalance: 0,

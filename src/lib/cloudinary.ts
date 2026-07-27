@@ -9,9 +9,13 @@ import { v2 as cloudinary } from "cloudinary";
 // Free account: cloudinary.com — no credit card. Get these three values from
 // the dashboard home page after signup.
 let configured = false;
+let configError: Error | null = null;
 
 export function getCloudinary() {
-  if (!configured) {
+  if (configured) return cloudinary;
+  if (configError) throw configError;
+
+  try {
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
@@ -19,8 +23,11 @@ export function getCloudinary() {
       secure: true,
     });
     configured = true;
+    return cloudinary;
+  } catch (err) {
+    configError = err instanceof Error ? err : new Error(String(err));
+    throw configError;
   }
-  return cloudinary;
 }
 
 export function uploadAvatarBuffer(buffer: Buffer, publicId: string): Promise<string> {

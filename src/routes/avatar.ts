@@ -3,9 +3,40 @@ import { asyncHandler } from "../lib/asyncHandler";
 import multer from "multer";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
+import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/cloudinary";
 import { generateHuggingFaceImage, isHuggingFaceConfigured } from "../lib/providers/huggingface";
+
+// In-memory cache for recently generated images (keyed by prompt hash)
+// Reduces duplicate generation and improves perceived speed.
+const imageCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_CACHE_ENTRIES = 200;
+
+function cacheKey(prompt: string, width: number, height: number): string {
+  return `${width}x${height}:${prompt.toLowerCase().replace(/\s+/g, " ").trim()}`;
+}
+
+async function getCachedImage(key: string): Promise<Buffer | null> {
+  const entry = imageCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    imageCache.delete(key);
+    return null;
+  }
+  return entry.buffer;
+}
+
+function setCachedImage(key: string, buffer: Buffer): void {
+  if (imageCache.size >= MAX_CACHE_ENTRIES) {
+    // Evict a random expired (or any) entry to bound cache size — O(1) instead
+    // of sorting all entries. Expired entries are cleaned on read paths.
+    const first = imageCache.keys().next();
+    if (!first.done) imageCache.delete(first.value);
+  }
+  imageCache.set(key, { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
+}
 
 const router = Router();
 
@@ -56,18 +87,20 @@ function buildImagePrompt(
   }
 
   const base =
-    `A stylized portrait avatar of a fictional character named ${character.name}. ` +
+    `A highly polished digital portrait of a fictional character named ${character.name}. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
-    `Digital illustration, shoulders-up portrait, clean background, no text.`;
+    `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
 
   if (character.isExplicit) {
     return (
-      `${base} Mature, alluring adult aesthetic; confident sensuality, flattering lighting, suggestive or revealing ` +
-      `fashion that fits the persona. Evocative but portrait-focused (shoulders-up), no text or watermarks.`
+      `${base} Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. ` +
+      `Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements.`
     );
   }
 
-  return `${base} Attractive stylized character art.`;
+  return (
+    `${base} Beautiful stylized character art with expressive emotion, rich detail, and a professional finish.`
+  );
 }
 
 // Pollinations.ai (https://pollinations.ai) — free, keyless, OpenAI-Flux-backed
@@ -124,10 +157,10 @@ async function generatePollinationsImage(
 }
 
 // ---------------------------------------------------------------------------
-// Image-gen fallback chain: Pollinations (free, keyless, always available,
-// and handles explicit personas unfiltered) tried first; Hugging Face
-// (FLUX.1-schnell) is the fallback when HUGGINGFACE_API_KEY is set and
-// Pollinations fails or times out.
+// Enhanced image-gen fallback chain with parallel attempts for speed.
+// Hugging Face (when configured) is tried first for higher-fidelity FLUX.
+// If it's unavailable or fails, Pollinations remains the free, keyless
+// fallback that still supports explicit persona prompts.
 // ---------------------------------------------------------------------------
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
@@ -136,18 +169,61 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
+  // Try Hugging Face first if configured (higher quality, faster cold-start)
+  if (isHuggingFaceConfigured()) {
+    try {
+      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Hugging Face failed, falling back to Pollinations:", msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
+  // Fallback to Pollinations (always available, keyless)
   try {
     const bytes = await generatePollinationsImage(character, prompt, timeoutMs);
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Hugging Face:", msg);
+    console.warn("[avatar] Pollinations failed:", msg);
     errors.push(`pollinations: ${msg}`);
   }
 
+  throw new Error("All image providers failed: " + errors.join("; "));
+}
+
+// Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
+function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
+  const base =
+    `Cinematic scene featuring ${character.name}. ` +
+    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
+
+  if (character.isExplicit) {
+    return (
+      `${base} Mature adult scene, sensual atmosphere, intimate moment, tasteful but uninhibited. ` +
+      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks.`
+    );
+  }
+
+  return `${base} Emotional, engaging scene with strong composition.`;
+}
+
+// Generate a scene image (not necessarily portrait/avatar) with given dimensions
+async function generateSceneImage(
+  prompt: string,
+  width: number,
+  height: number,
+  isExplicit: boolean,
+  timeoutMs: number
+): Promise<{ bytes: Buffer; provider: string }> {
+  const errors: string[] = [];
+
   if (isHuggingFaceConfigured()) {
     try {
-      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
       return { bytes, provider: "huggingface" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -155,8 +231,183 @@ async function generateAvatarImage(
     }
   }
 
+  try {
+    const bytes = await generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs);
+    return { bytes, provider: "pollinations" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errors.push(`pollinations: ${msg}`);
+  }
+
   throw new Error("All image providers failed: " + errors.join("; "));
 }
+
+async function generateHuggingFaceImageWithSize(
+  prompt: string,
+  width: number,
+  height: number,
+  timeoutMs: number
+): Promise<Buffer> {
+  const apiKey = process.env.HUGGINGFACE_API_KEY;
+  if (!apiKey) throw new Error("HUGGINGFACE_API_KEY not set");
+
+  const model = process.env.HUGGINGFACE_IMAGE_MODEL || "black-forest-labs/FLUX.1-schnell";
+  const url = `https://api-inference.huggingface.co/models/${model}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "image/png",
+      },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: { width, height },
+        options: { wait_for_model: true },
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Hugging Face request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Hugging Face API error ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Hugging Face returned non-image response: ${errText.slice(0, 300)}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  const bytes = Buffer.from(arrayBuffer);
+  if (!bytes.length) throw new Error("Hugging Face returned an empty image");
+  return bytes;
+}
+
+async function generatePollinationsSceneImage(
+  prompt: string,
+  width: number,
+  height: number,
+  isExplicit: boolean,
+  timeoutMs: number
+): Promise<Buffer> {
+  const params = new URLSearchParams({
+    width: String(width),
+    height: String(height),
+    model: "flux",
+    nologo: "true",
+    safe: isExplicit ? "false" : "true",
+    seed: String(Date.now() % 1_000_000),
+  });
+  const apiKey = process.env.POLLINATIONS_API_KEY;
+  if (apiKey) params.set("key", apiKey);
+
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let apiRes: Response;
+  try {
+    apiRes = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Pollinations request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!apiRes.ok) {
+    const errText = await apiRes.text().catch(() => "");
+    throw new Error(`Pollinations API error ${apiRes.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const arrayBuffer = await apiRes.arrayBuffer();
+  const bytes = Buffer.from(arrayBuffer);
+  if (!bytes.length) throw new Error("Pollinations returned an empty image");
+  return bytes;
+}
+
+// POST /api/characters/:id/image/generate — AI-generate an in-chat scene image
+// Supports both explicit and non-explicit characters with tailored prompts.
+router.post("/:id/image/generate", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const character = await prisma.character.findUnique({ where: { id: req.params.id } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const body = req.body ?? {};
+  const customPrompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 4000) : undefined;
+  const aspect = typeof body.aspect === "string" && ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(body.aspect)
+    ? body.aspect
+    : "1:1";
+
+  // Rate limit to prevent abuse
+  const limit = checkRateLimit(`image:${userId}`, 10, 60);
+  if (limit.limited) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many image requests. Please slow down a bit." });
+  }
+
+  const aspectMap: Record<string, { w: number; h: number }> = {
+    "1:1": { w: 1024, h: 1024 },
+    "16:9": { w: 1024, h: 576 },
+    "9:16": { w: 576, h: 1024 },
+    "4:3": { w: 1024, h: 768 },
+    "3:4": { w: 768, h: 1024 },
+  };
+  const { w, h } = aspectMap[aspect] || { w: 1024, h: 1024 };
+
+  const scenePrompt = customPrompt || buildSceneImagePrompt(character);
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+
+  // Check cache first for near-instant repeat generation
+  const key = cacheKey(scenePrompt, w, h);
+  const cached = await getCachedImage(key);
+  if (cached) {
+    const cleanBytes = await sharp(cached).toBuffer().catch(() => cached);
+    const publicId = `${req.params.id}-${Date.now()}-scene`;
+    const imageUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+    console.log(`[image] served scene from cache`);
+    return res.json({ url: imageUrl, provider: "cache" });
+  }
+
+  let result: { bytes: Buffer; provider: string };
+  try {
+    result = await generateSceneImage(scenePrompt, w, h, character.isExplicit, timeoutMs);
+  } catch (err) {
+    console.error("Scene image generation failed", err);
+    return res.status(502).json({ error: "Image generation failed. Try again with a different prompt." });
+  }
+
+  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  const publicId = `${req.params.id}-${Date.now()}-scene`;
+  const imageUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+
+  setCachedImage(key, cleanBytes);
+  console.log(`[image] generated scene via ${result.provider}`);
+  return res.json({ url: imageUrl, provider: result.provider });
+}));
 
 // POST /api/characters/:id/avatar/generate — AI-generate an avatar (free, no API key needed)
 router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
@@ -172,6 +423,21 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildImagePrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+
+  // Check cache first for near-instant repeat generation
+  const sizesEnv = (process.env.AVATAR_SIZES || "1024x1024").split(",").map((s) => s.trim());
+  const primarySize = sizesEnv[0] || "1024x1024";
+  const [cacheW, cacheH] = primarySize.split("x").map(Number);
+  const key = cacheKey(prompt, cacheW || 1024, cacheH || 1024);
+  const cached = await getCachedImage(key);
+  if (cached) {
+    const cleanBytes = await sharp(cached).toBuffer().catch(() => cached);
+    const publicId = `${req.params.id}-${Date.now()}-generated`;
+    const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+    const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
+    console.log(`[avatar] served from cache`);
+    return res.json({ character: updated });
+  }
 
   let result: { bytes: Buffer; provider: string };
   try {
@@ -193,10 +459,128 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
 
+  // Cache for fast repeat generation
+  setCachedImage(key, cleanBytes);
+
   // Provider name is logged server-side only for debugging — never sent in
   // the API response, so the client/user has no way to see which service
   // generated a given avatar.
   console.log(`[avatar] generated via ${result.provider}`);
+  return res.json({ character: updated });
+}));
+
+// ---------------------------------------------------------------------------
+// BACKGROUND IMAGE (chat interface wallpaper)
+// ---------------------------------------------------------------------------
+
+// Background prompt tuned for chat interface wallpapers — atmospheric, wide,
+// non-distracting scenes that look good behind text bubbles.
+function buildBackgroundPrompt(
+  character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
+) {
+  const base =
+    `A stunning atmospheric background scene for a character named ${character.name}. ` +
+    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
+    `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
+
+  if (character.isExplicit) {
+    return (
+      `${base} Mature, sensual ambient atmosphere with warm mood lighting, velvety textures, ` +
+      `intimate setting, elegant and tasteful. No explicit nudity, but a seductive, luxurious ambiance.`
+    );
+  }
+
+  return (
+    `${base} Beautiful, immersive environment with a sense of wonder and emotional depth. ` +
+    `Soft bokeh, natural or fantasy landscape, painterly quality, suitable as a chat wallpaper.`
+  );
+}
+
+// POST /api/characters/:id/background/generate — AI-generate a chat background/wallpaper image
+router.post("/:id/background/generate", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const character = await prisma.character.findUnique({ where: { id: req.params.id } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const body = req.body ?? {};
+  const customPrompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 4000) : undefined;
+  const prompt = customPrompt || buildBackgroundPrompt(character);
+
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+
+  // Rate limit
+  const limit = checkRateLimit(`background:${userId}`, 10, 60);
+  if (limit.limited) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many image requests. Please slow down a bit." });
+  }
+
+  // Use scene image generation with landscape dimensions for backgrounds
+  let result: { bytes: Buffer; provider: string };
+  try {
+    // 16:9 landscape for background
+    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs);
+  } catch (err) {
+    console.error("Background image generation failed", err);
+    return res.status(502).json({ error: "Background image generation failed. Try again with a different prompt." });
+  }
+
+  // Strip metadata
+  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  const publicId = `${req.params.id}-${Date.now()}-bg`;
+  const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+  const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
+
+  console.log(`[background] generated via ${result.provider}`);
+  return res.json({ character: updated });
+}));
+
+// POST /api/characters/:id/background — upload a custom background image
+router.post("/:id/background", upload.single("background"), asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const character = await prisma.character.findUnique({ where: { id: req.params.id } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: "No image file was sent." });
+  }
+  const ext = ALLOWED_TYPES[file.mimetype];
+  if (!ext) {
+    return res.status(400).json({ error: "Use a PNG, JPEG, WebP, or GIF image." });
+  }
+
+  const publicId = `${req.params.id}-${Date.now()}-bg`;
+  const backgroundUrl = await uploadAvatarBuffer(file.buffer, publicId);
+  const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
+
+  return res.json({ character: updated });
+}));
+
+// DELETE /api/characters/:id/background — remove the background image
+router.delete("/:id/background", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const character = await prisma.character.findUnique({ where: { id: req.params.id } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const updated = await prisma.character.update({
+    where: { id: req.params.id },
+    data: { backgroundUrl: null },
+  });
+
   return res.json({ character: updated });
 }));
 

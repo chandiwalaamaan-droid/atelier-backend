@@ -19,6 +19,20 @@ const buckets = new Map<string, Bucket>();
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let lastCleanup = Date.now();
 
+// Separate interval-based cleanup that runs regardless of traffic, so stale
+// buckets don't accumulate during low-traffic periods.
+const CLEANUP_TIMER = setInterval(() => {
+  const now = Date.now();
+  lastCleanup = now;
+  for (const [key, bucket] of buckets) {
+    if (now >= bucket.resetAt) buckets.delete(key);
+  }
+}, CLEANUP_INTERVAL_MS);
+
+// Prevent the timer from keeping the Node process alive by itself if no
+// other work is pending (e.g. during tests).
+if (CLEANUP_TIMER.unref) CLEANUP_TIMER.unref();
+
 function cleanupIfDue() {
   const now = Date.now();
   if (now - lastCleanup < CLEANUP_INTERVAL_MS) return;
