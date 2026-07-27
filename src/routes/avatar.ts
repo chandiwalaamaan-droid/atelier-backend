@@ -183,8 +183,6 @@ async function withPollinationsRetry<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Enhanced image-gen fallback chain with parallel attempts for speed.
-// Hugging Face (when configured) is tried first for higher-fidelity FLUX.
 // ---------------------------------------------------------------------------
 // Enhanced image-gen fallback chain, ordered by generation freedom + quality:
 // 1. Pollinations first — supports unrestricted mode (safe:false) for
@@ -195,6 +193,7 @@ async function withPollinationsRetry<T>(
 //    filter/reject explicit prompts and has no permissive-mode toggle; kept
 //    purely as a last-resort safety net (and it's fixed-aspect + slightly
 //    lower quality than the Flux-family models above).
+// (Order below: HF -> Cloudflare -> Pollinations, per explicit request.)
 // ---------------------------------------------------------------------------
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
@@ -203,7 +202,31 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Try Pollinations first (unrestricted mode for explicit personas, keyless)
+  // Try Hugging Face first if configured
+  if (isHuggingFaceConfigured()) {
+    try {
+      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Hugging Face failed, falling back to Cloudflare:", msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
+  // Fallback to Cloudflare Workers AI if configured
+  if (isCloudflareConfigured()) {
+    try {
+      const bytes = await generateCloudflareImage(prompt, timeoutMs);
+      return { bytes, provider: "cloudflare" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Cloudflare Workers AI failed, falling back to Pollinations:", msg);
+      errors.push(`cloudflare: ${msg}`);
+    }
+  }
+
+  // Final fallback: Pollinations (unrestricted mode for explicit personas, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -211,34 +234,8 @@ async function generateAvatarImage(
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Hugging Face:", msg);
+    console.warn("[avatar] Pollinations failed:", msg);
     errors.push(`pollinations: ${msg}`);
-  }
-
-  // Fallback to Hugging Face if configured (open model, no content policy)
-  if (isHuggingFaceConfigured()) {
-    try {
-      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Hugging Face failed:", msg);
-      errors.push(`huggingface: ${msg}`);
-    }
-  }
-
-  // Final fallback: Cloudflare Workers AI (free daily neuron budget, not
-  // subject to Pollinations' shared-IP queue limit, but likely to filter
-  // explicit content and has no permissive-mode toggle)
-  if (isCloudflareConfigured()) {
-    try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs);
-      return { bytes, provider: "cloudflare" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Cloudflare Workers AI failed:", msg);
-      errors.push(`cloudflare: ${msg}`);
-    }
   }
 
   throw new Error("All image providers failed: " + errors.join("; "));
@@ -271,18 +268,7 @@ async function generateSceneImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Pollinations first (unrestricted mode, exact width/height, keyless)
-  try {
-    const bytes = await withPollinationsRetry(() =>
-      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
-    );
-    return { bytes, provider: "pollinations" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`pollinations: ${msg}`);
-  }
-
-  // Hugging Face second (open model, no content policy)
+  // Hugging Face first (open model, no content policy)
   if (isHuggingFaceConfigured()) {
     try {
       const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
@@ -293,7 +279,7 @@ async function generateSceneImage(
     }
   }
 
-  // Final fallback: Cloudflare Workers AI. Note this ignores width/height
+  // Cloudflare Workers AI second. Note this ignores width/height
   // (SDXL-Lightning outputs a fixed ~1024x1024) — callers that need an exact
   // aspect ratio should resize downstream, same as the rest of this codebase
   // already does with sharp.
@@ -305,6 +291,17 @@ async function generateSceneImage(
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`cloudflare: ${msg}`);
     }
+  }
+
+  // Final fallback: Pollinations (unrestricted mode, exact width/height, keyless)
+  try {
+    const bytes = await withPollinationsRetry(() =>
+      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
+    );
+    return { bytes, provider: "pollinations" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errors.push(`pollinations: ${msg}`);
   }
 
   throw new Error("All image providers failed: " + errors.join("; "));
