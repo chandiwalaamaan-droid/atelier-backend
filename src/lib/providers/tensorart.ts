@@ -21,7 +21,7 @@ export async function generateTensorArtImage(
   const apiKey = process.env.TENSOR_ART_API_KEY;
   if (!apiKey) throw new Error("TENSOR_ART_API_KEY not set");
 
-  const url = "https://api.tensor.art/v1/text-to-image";
+  const url = "https://api.tensor.art/v1/image/generate";
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
