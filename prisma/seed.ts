@@ -52,7 +52,12 @@ async function main() {
   console.log(`Existing characters for seed user: ${existingCount}`);
 
   if (existingCount >= characters.length) {
-    console.log("Characters already seeded. Skipping.");
+    console.log("Characters already seeded. Making sure they're all public...");
+    await prisma.character.updateMany({
+      where: { ownerId: seedUser.id },
+      data: { isPublic: true },
+    });
+    console.log("Done.");
     return;
   }
 
@@ -74,7 +79,7 @@ async function main() {
         backstory: char.backstory,
         greeting: char.greeting,
         isExplicit: char.isExplicit,
-        isPublic: !char.isExplicit, // Share non-explicit to discover
+        isPublic: true, // shown on Discover; explicit ones only surface when the NSFW toggle is on
       },
     });
   }

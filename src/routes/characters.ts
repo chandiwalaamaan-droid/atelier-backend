@@ -43,7 +43,7 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
     ? String(raw.accentColor)
     : "#c9a227";
   const isExplicit = raw.isExplicit === true;
-  const isPublic = raw.isPublic === true && !isExplicit;
+  const isPublic = raw.isPublic === true;
   const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
 
   if (!name || !personality || !backstory || !greeting) {
@@ -244,17 +244,25 @@ router.post("/import", asyncHandler(async (req, res) => {
 }));
 
 // GET /api/characters/discover — public gallery of characters shared by any
-// user. Explicit characters are never included here (enforced when a
-// character is made public, not just at read time, but double-checked here
-// too as defense in depth).
+// user. By default only non-explicit ("SFW") characters are returned; pass
+// ?nsfw=1 to also include explicit ones. This is the server-side half of the
+// homepage's NSFW toggle — the client sends ?nsfw=1 only once the person has
+// switched it on, so explicit content never reaches a browser that hasn't
+// asked for it.
 // NOTE: this must be registered before GET "/:id" below, or Express will
 // treat "discover" as an :id and this route will never be reached.
 router.get("/discover", asyncHandler(async (req, res) => {
   const userId = await getCurrentUserId(req);
   if (!userId) return res.status(401).json({ error: "Not signed in." });
 
+  const includeExplicit = req.query.nsfw === "1" || req.query.nsfw === "true";
+
   const characters = await prisma.character.findMany({
-    where: { isPublic: true, isExplicit: false, isHidden: false },
+    where: {
+      isPublic: true,
+      isHidden: false,
+      ...(includeExplicit ? {} : { isExplicit: false }),
+    },
     orderBy: { createdAt: "desc" },
     take: 60,
     include: { owner: { select: { displayName: true } } },
@@ -290,7 +298,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : existing.accentColor;
   const isExplicit = typeof body.isExplicit === "boolean" ? body.isExplicit : existing.isExplicit;
   const requestedPublic = typeof body.isPublic === "boolean" ? body.isPublic : existing.isPublic;
-  const isPublic = requestedPublic && !isExplicit;
+  const isPublic = requestedPublic;
   const roleplayNotes = isExplicit
     ? clean(body.roleplayNotes, existing.roleplayNotes ?? "")
     : "";
@@ -331,7 +339,7 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
   if (!userId) return res.status(401).json({ error: "Not signed in." });
 
   const source = await prisma.character.findUnique({ where: { id: req.params.id } });
-  if (!source || !source.isPublic || source.isExplicit || source.isHidden) {
+  if (!source || !source.isPublic || source.isHidden) {
     return res.status(404).json({ error: "That character isn't available to remix." });
   }
 
@@ -347,7 +355,7 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
       avatarUrl: source.avatarUrl,
       backgroundUrl: source.backgroundUrl,
       accentColor: source.accentColor,
-      isExplicit: false,
+      isExplicit: source.isExplicit,
       isPublic: false, // the remix starts private; the user can choose to share their own copy later
     },
   });
