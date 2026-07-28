@@ -163,7 +163,7 @@ async function generatePollinationsImage(
 // whole request immediately.
 async function withPollinationsRetry<T>(
   fn: () => Promise<T>,
-  maxAttempts = 3
+  maxAttempts = 2
 ): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -221,8 +221,10 @@ async function generateAvatarImage(
   timeoutMs: number
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
+  const t0 = Date.now();
 
   // Try Pollinations first (free, keyless, uncensored, FLUX model)
+  const pollStart = Date.now();
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -230,24 +232,30 @@ async function generateAvatarImage(
     if (await isBlankOrBlockedImage(bytes)) {
       throw new Error("returned a blank/blocked image (likely safety filter)");
     }
+    console.log(`[avatar] pollinations answered in ${Date.now() - pollStart}ms (total ${Date.now() - t0}ms)`);
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Cloudflare:", msg);
+    console.warn(
+      `[avatar] Pollinations failed after ${Date.now() - pollStart}ms, falling back to Cloudflare:`,
+      msg
+    );
     errors.push(`pollinations: ${msg}`);
   }
 
   // Final fallback: Cloudflare Workers AI
   if (isCloudflareConfigured()) {
+    const cfStart = Date.now();
     try {
       const bytes = await generateCloudflareImage(prompt, timeoutMs);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
+      console.log(`[avatar] cloudflare answered in ${Date.now() - cfStart}ms (total ${Date.now() - t0}ms)`);
       return { bytes, provider: "cloudflare" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Cloudflare Workers AI failed:", msg);
+      console.warn(`[avatar] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
       errors.push(`cloudflare: ${msg}`);
     }
   }
@@ -281,8 +289,10 @@ async function generateSceneImage(
   timeoutMs: number
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
+  const t0 = Date.now();
 
   // Try Pollinations first (exact width/height, keyless, FLUX model)
+  const pollStart = Date.now();
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
@@ -290,9 +300,11 @@ async function generateSceneImage(
     if (await isBlankOrBlockedImage(bytes)) {
       throw new Error("returned a blank/blocked image (likely safety filter)");
     }
+    console.log(`[scene] pollinations answered in ${Date.now() - pollStart}ms (total ${Date.now() - t0}ms)`);
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[scene] Pollinations failed after ${Date.now() - pollStart}ms:`, msg);
     errors.push(`pollinations: ${msg}`);
   }
 
@@ -301,14 +313,17 @@ async function generateSceneImage(
   // aspect ratio should resize downstream, same as the rest of this codebase
   // already does with sharp.
   if (isCloudflareConfigured()) {
+    const cfStart = Date.now();
     try {
       const bytes = await generateCloudflareImage(prompt, timeoutMs);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
+      console.log(`[scene] cloudflare answered in ${Date.now() - cfStart}ms (total ${Date.now() - t0}ms)`);
       return { bytes, provider: "cloudflare" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[scene] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
       errors.push(`cloudflare: ${msg}`);
     }
   }
@@ -457,7 +472,7 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   const { w, h } = aspectMap[aspect] || { w: 1024, h: 1024 };
 
   const scenePrompt = customPrompt || buildSceneImagePrompt(character);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
 
   // Check cache first for near-instant repeat generation
   const key = cacheKey(scenePrompt, w, h);
@@ -500,7 +515,7 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const body = req.body ?? {};
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildImagePrompt(character, customPrompt);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
 
   // Check cache first for near-instant repeat generation
   const sizesEnv = (process.env.AVATAR_SIZES || "1024x1024").split(",").map((s) => s.trim());
@@ -589,7 +604,7 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 4000) : undefined;
   const prompt = customPrompt || buildBackgroundPrompt(character);
 
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
 
   // Rate limit
   const limit = checkRateLimit(`background:${userId}`, 10, 60);
