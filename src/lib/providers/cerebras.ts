@@ -9,7 +9,7 @@ import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./open
  * https://inference-docs.cerebras.ai for the current free list.
  */
 const BASE_URL = "https://api.cerebras.ai/v1";
-const MODEL = process.env.CEREBRAS_MODEL || "llama-3.3-70b";
+const MODEL = process.env.CEREBRAS_MODEL || "llama-4-scout-17b-16e-instruct";
 
 export function isCerebrasConfigured() {
   return Boolean(process.env.CEREBRAS_API_KEY);

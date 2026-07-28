@@ -34,13 +34,32 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      # Avatar image generation — Pollinations (already free/keyless) is
-      # primary; this is the fallback used only if Pollinations fails.
-      # Free token from huggingface.co.
+      # Avatar image generation — Pollinations (already free/keyless,
+      # unfiltered for explicit personas) is tried first, then Cloudflare
+      # Workers AI as the fallback (see CLOUDFLARE_ACCOUNT_ID/TOKEN below).
+      # HUGGINGFACE_API_KEY/HUGGINGFACE_IMAGE_MODEL are currently NOT wired
+      # into the active image fallback chain in src/routes/avatar.ts (the
+      # function exists but isn't called) — left here only in case you
+      # re-enable it later. If you do, note hf-inference has been dropping
+      # FLUX models; stabilityai/stable-diffusion-2-1 was the last model
+      # confirmed working there as of July 2026 — verify before relying on it.
       - key: HUGGINGFACE_API_KEY
         sync: false
       - key: HUGGINGFACE_IMAGE_MODEL
-        value: "black-forest-labs/FLUX.1-schnell"
+        value: "stabilityai/stable-diffusion-2-1"
+      # Cloudflare Workers AI — fallback image provider. Free tier: 10,000
+      # neurons/day, no credit card. Get both values from the Cloudflare
+      # dashboard: AI -> Workers AI -> "Create a Workers AI API Token"
+      # (Account ID is shown on the same page).
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      # Per-provider image generation timeout (seconds). Lowered from the
+      # original 30s default — each provider attempt (plus Pollinations'
+      # own internal retry) was compounding into 90+ second worst-case waits.
+      - key: IMAGE_GEN_TIMEOUT_SECONDS
+        value: "18"
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_KEY_2
@@ -57,6 +76,24 @@ services:
         sync: false
       - key: CEREBRAS_MODEL
         value: "llama-3.3-70b"
+      - key: SAMBANOVA_API_KEY
+        sync: false
+      - key: SAMBANOVA_API_KEY_2
+        sync: false
+      - key: SAMBANOVA_MODEL
+        value: "Meta-Llama-3.3-70B-Instruct"
+      # Per-provider time-to-first-token timeout (seconds) for the hosted
+      # text chat providers (NVIDIA/Cerebras/SambaNova/Groq). Lowered from
+      # 15s to 8s so a slow-but-not-dead provider gets skipped faster instead
+      # of eating that latency on every single request.
+      - key: GROQ_TIMEOUT_SECONDS
+        value: "8"
+      - key: NVIDIA_TIMEOUT_SECONDS
+        value: "8"
+      - key: CEREBRAS_TIMEOUT_SECONDS
+        value: "8"
+      - key: SAMBANOVA_TIMEOUT_SECONDS
+        value: "8"
       - key: OPENAI_API_KEY
         sync: false
       - key: NODE_ENV

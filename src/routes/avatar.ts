@@ -616,15 +616,18 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   // Use scene image generation with landscape dimensions for backgrounds
   let result: { bytes: Buffer; provider: string };
   try {
-    // 16:9 landscape for background
-    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs);
+    // Generate at 1024x576 (16:9) to avoid timeouts — Pollinations struggles
+    // with 1920x1080 within the default timeout. We resize to 1920x1080 below.
+    result = await generateSceneImage(prompt, 1024, 576, character.isExplicit, timeoutMs);
   } catch (err) {
     console.error("Background image generation failed", err);
     return res.status(502).json({ error: "Background image generation failed. Try again with a different prompt." });
   }
 
-  // Strip metadata
-  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  // Strip metadata and resize to 1920x1080 for crisp wide backgrounds
+  const cleanBytes = await sharp(result.bytes)
+    .resize(1920, 1080, { fit: "cover", withoutEnlargement: true })
+    .toBuffer();
   const publicId = `${req.params.id}-${Date.now()}-bg`;
   const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
