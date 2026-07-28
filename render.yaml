@@ -26,35 +26,20 @@ services:
       # e.g. "https://your-site.netlify.app"
       - key: FRONTEND_URL
         sync: false
-      # Avatar hosting (uploaded + AI-generated images) — Cloudflare R2.
-      # Cloudinary flagged this app's AI-generated adult content under its
-      # Acceptable Use Policy and threatened account termination, so image
-      # storage moved to R2 (same Cloudflare account as Workers AI below,
-      # confirmed NSFW-permissive by Cloudflare's own community team). Free
-      # tier: 10GB storage + 1M writes + 10M reads/month, permanently, $0
-      # egress. Get R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY from Cloudflare
-      # dashboard -> R2 -> Manage R2 API Tokens -> Create API Token (needs
-      # Object Read & Write). R2_BUCKET_NAME is whatever you name the bucket
-      # when you create it. R2_PUBLIC_URL is the r2.dev URL Cloudflare gives
-      # you when you enable public access on that bucket (or your own custom
-      # domain once you set one up on the bucket's Settings page).
-      - key: R2_ACCESS_KEY_ID
+      # Avatar hosting (uploaded + AI-generated images) — Backblaze B2.
+      # Migrated from Cloudinary (flagged AI adult content) -> Cloudflare R2
+      # -> Backblaze B2. B2 has no restriction on legal AI-generated adult
+      # content. Free tier: 10 GB storage + 1 GB/day free egress, no credit
+      # card needed. See render-deploy/.env.example for setup instructions.
+      - key: B2_ENDPOINT
         sync: false
-      - key: R2_SECRET_ACCESS_KEY
+      - key: B2_KEY_ID
         sync: false
-      - key: R2_BUCKET_NAME
+      - key: B2_APPLICATION_KEY
         sync: false
-      - key: R2_PUBLIC_URL
+      - key: B2_BUCKET_NAME
         sync: false
-      # No longer used (src/lib/cloudinary.ts is dead code as of the R2
-      # migration above) — left here only so nothing breaks if you haven't
-      # removed these from your actual Render dashboard env vars yet. Safe
-      # to delete once you confirm R2 is working.
-      - key: CLOUDINARY_CLOUD_NAME
-        sync: false
-      - key: CLOUDINARY_API_KEY
-        sync: false
-      - key: CLOUDINARY_API_SECRET
+      - key: B2_PUBLIC_URL
         sync: false
       # Avatar image generation — Pollinations (already free/keyless,
       # unfiltered for explicit personas) is tried first, then Cloudflare

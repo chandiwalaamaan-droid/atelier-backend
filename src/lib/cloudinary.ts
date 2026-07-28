@@ -1,50 +1,10 @@
-import { v2 as cloudinary } from "cloudinary";
-
-// Avatars (uploaded or AI-generated) are stored on Cloudinary's free tier
-// instead of local disk. This matters specifically on Render's free plan,
-// which does not support persistent disks — anything written to local disk
-// is wiped on every restart/redeploy. Cloudinary URLs are permanent
-// regardless of how often the backend restarts.
+// This file was originally a Cloudinary uploader. Cloudinary flagged this
+// app's AI-generated adult content under its Acceptable Use Policy, so
+// all image storage was migrated to Backblaze B2 (see ./b2.ts).
 //
-// Free account: cloudinary.com — no credit card. Get these three values from
-// the dashboard home page after signup.
-let configured = false;
-let configError: Error | null = null;
-
-export function getCloudinary() {
-  if (configured) return cloudinary;
-  if (configError) throw configError;
-
-  try {
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-      secure: true,
-    });
-    configured = true;
-    return cloudinary;
-  } catch (err) {
-    configError = err instanceof Error ? err : new Error(String(err));
-    throw configError;
-  }
-}
-
-export function uploadAvatarBuffer(buffer: Buffer, publicId: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    getCloudinary()
-      .uploader.upload_stream(
-        {
-          folder: "atelier/avatars",
-          public_id: publicId,
-          resource_type: "image",
-          overwrite: true,
-        },
-        (err, result) => {
-          if (err || !result) return reject(err ?? new Error("Cloudinary upload returned no result"));
-          resolve(result.secure_url);
-        }
-      )
-      .end(buffer);
-  });
-}
+// This file is kept as a stub so the TypeScript build still succeeds for
+// anyone who has it checked out. The actual upload logic lives in ./b2.ts.
+//
+// If nothing in src/ imports from this file anymore, feel free to delete it.
+export { uploadAvatarBuffer } from "./b2";
+export { uploadAvatarBuffer as uploadToCloudinary } from "./b2";
