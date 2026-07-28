@@ -5,8 +5,9 @@ import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
-import { uploadAvatarBuffer } from "../lib/cloudinary";
+import { uploadAvatarBuffer } from "../lib/b2";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
+import { isHuggingFaceConfigured } from "../lib/providers/huggingface";
 
 // In-memory cache for recently generated images (keyed by prompt hash)
 // Reduces duplicate generation and improves perceived speed.
@@ -260,6 +261,24 @@ async function generateAvatarImage(
     }
   }
 
+  // Last-resort fallback: Hugging Face Inference API (free tier, shared queue,
+  // so it's slower/less reliable than the other two — tried last on purpose).
+  if (isHuggingFaceConfigured()) {
+    const hfStart = Date.now();
+    try {
+      const bytes = await generateHuggingFaceImageWithSize(prompt, 512, 512, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      console.log(`[avatar] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[avatar] Hugging Face failed after ${Date.now() - hfStart}ms:`, msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
   throw new Error("All image providers failed: " + errors.join("; "));
 }
 
@@ -325,6 +344,26 @@ async function generateSceneImage(
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[scene] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
       errors.push(`cloudflare: ${msg}`);
+    }
+  }
+
+  // Last-resort fallback: Hugging Face Inference API. Note this ignores the
+  // requested width/height when the model doesn't support it server-side —
+  // generateHuggingFaceImageWithSize still passes them through as a best
+  // effort (SD 2.1 does honor width/height, unlike Cloudflare's SDXL-Lightning).
+  if (isHuggingFaceConfigured()) {
+    const hfStart = Date.now();
+    try {
+      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      console.log(`[scene] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[scene] Hugging Face failed after ${Date.now() - hfStart}ms:`, msg);
+      errors.push(`huggingface: ${msg}`);
     }
   }
 

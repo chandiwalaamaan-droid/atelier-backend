@@ -54,9 +54,9 @@ app.post("/api/billing/webhook", express.raw({ type: "application/json" }), asyn
 
 app.use(express.json({ limit: "2mb" }));
 
-// Avatar images (uploaded or AI-generated) are hosted on Cloudinary — see
-// src/lib/cloudinary.ts — so there's no local-disk uploads folder to serve
-// and no persistent disk needed on Render.
+// Avatar images (uploaded or AI-generated) are hosted on Backblaze B2 — see
+// src/lib/b2.ts — so there's no local-disk uploads folder to serve and no
+// persistent disk needed on Render.
 
 app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);
