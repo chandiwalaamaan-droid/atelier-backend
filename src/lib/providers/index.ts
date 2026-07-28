@@ -217,10 +217,10 @@ function envSeconds(name: string, def: number): number {
   return Number.isFinite(parsed) ? parsed : def;
 }
 
-const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 8) * 1000;
-const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
-const CEREBRAS_TIMEOUT_MS = envSeconds("CEREBRAS_TIMEOUT_SECONDS", 8) * 1000;
-const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
+const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 15) * 1000;
+const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 15) * 1000;
+const CEREBRAS_TIMEOUT_MS = envSeconds("CEREBRAS_TIMEOUT_SECONDS", 15) * 1000;
+const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 15) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
 const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
