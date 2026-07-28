@@ -116,9 +116,19 @@ function buildImagePrompt(
   // NO_TEXT_NEGATIVE_PROMPT comment above. The visual traits below are all
   // the model needs; the name is just a label the app uses, not something
   // it should ever try to paint into the image.
+  //
+  // CRITICAL: Never use "Label: value" syntax (like "Tagline: X. Traits: Y.")
+  // in prompts. Diffusion models interpret colon-separated labels as
+  // captions/overlays to render as literal text in the image — that's what
+  // causes the "avatar is just the character's name/description rendered as
+  // text/typography" bug. Always embed values as natural prose.
+  const personalityDesc = character.personality ? `with a ${character.personality} personality` : "";
+  const taglineDesc = character.tagline
+    ? `, who embodies the essence of ${character.tagline}`
+    : "";
   const base =
-    `A highly polished digital portrait of an original fictional character. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `A highly polished digital portrait of an original fictional character ` +
+    `${personalityDesc}${taglineDesc}. ` +
     `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
 
   if (character.isExplicit) {
@@ -314,9 +324,13 @@ async function generateAvatarImage(
 
 // Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
 function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
+  const personalityDesc = character.personality ? `with a ${character.personality} personality` : "";
+  const taglineDesc = character.tagline
+    ? `, embodying ${character.tagline}`
+    : "";
   const base =
-    `Cinematic scene featuring an original fictional character. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `Cinematic scene featuring an original fictional character ` +
+    `${personalityDesc}${taglineDesc}. ` +
     `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
 
   if (character.isExplicit) {
@@ -641,9 +655,13 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
 function buildBackgroundPrompt(
   character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
 ) {
+  const personalityDesc = character.personality ? `with a ${character.personality} mood and atmosphere` : "";
+  const taglineDesc = character.tagline
+    ? `, inspired by ${character.tagline}`
+    : "";
   const base =
-    `A stunning atmospheric background scene. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `A stunning atmospheric background scene ` +
+    `${personalityDesc}${taglineDesc}. ` +
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
 
