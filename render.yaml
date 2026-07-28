@@ -41,14 +41,14 @@ services:
         sync: false
       - key: B2_PUBLIC_URL
         sync: false
-      # Avatar image generation — Pollinations (already free/keyless,
-      # unfiltered for explicit personas) is tried first, then Cloudflare
-      # Workers AI as the fallback (see CLOUDFLARE_ACCOUNT_ID/TOKEN below).
-      # HUGGINGFACE_API_KEY/HUGGINGFACE_IMAGE_MODEL are wired in as a third,
-      # last-resort fallback in src/routes/avatar.ts (tried after Pollinations
-      # and Cloudflare both fail). Note hf-inference has been dropping FLUX
-      # models; stabilityai/stable-diffusion-2-1 was the last model confirmed
-      # working there as of July 2026 — verify before relying on it.
+      # Avatar image generation — Hugging Face is tried first when configured
+      # (more reliable on Render's shared IPs), then Pollinations (free/
+      # keyless, unfiltered for explicit personas), then Cloudflare Workers AI
+      # as the last resort (see CLOUDFLARE_ACCOUNT_ID/TOKEN below). See
+      # src/routes/avatar.ts generateAvatarImage() for the actual order. Note
+      # hf-inference has been dropping FLUX models; stabilityai/stable-
+      # diffusion-2-1 was the last model confirmed working there as of July
+      # 2026 — verify before relying on it.
       - key: HUGGINGFACE_API_KEY
         sync: false
       - key: HUGGINGFACE_IMAGE_MODEL
@@ -61,11 +61,13 @@ services:
         sync: false
       - key: CLOUDFLARE_API_TOKEN
         sync: false
-      # Per-provider image generation timeout (seconds). Lowered from the
-      # original 30s default — each provider attempt (plus Pollinations'
-      # own internal retry) was compounding into 90+ second worst-case waits.
+      # Per-provider image generation timeout (seconds). Matches the code
+      # default in src/routes/avatar.ts. Was dropped to 18s in an earlier
+      # revision, which compounded across the 3-provider fallback chain into
+      # too-short a budget per provider (esp. Hugging Face cold starts) —
+      # restored to 30s.
       - key: IMAGE_GEN_TIMEOUT_SECONDS
-        value: "18"
+        value: "30"
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_KEY_2

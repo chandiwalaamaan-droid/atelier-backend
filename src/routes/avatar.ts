@@ -116,19 +116,9 @@ function buildImagePrompt(
   // NO_TEXT_NEGATIVE_PROMPT comment above. The visual traits below are all
   // the model needs; the name is just a label the app uses, not something
   // it should ever try to paint into the image.
-  //
-  // CRITICAL: Never use "Label: value" syntax (like "Tagline: X. Traits: Y.")
-  // in prompts. Diffusion models interpret colon-separated labels as
-  // captions/overlays to render as literal text in the image — that's what
-  // causes the "avatar is just the character's name/description rendered as
-  // text/typography" bug. Always embed values as natural prose.
-  const personalityDesc = character.personality ? `with a ${character.personality} personality` : "";
-  const taglineDesc = character.tagline
-    ? `, who embodies the essence of ${character.tagline}`
-    : "";
   const base =
-    `A highly polished digital portrait of an original fictional character ` +
-    `${personalityDesc}${taglineDesc}. ` +
+    `A highly polished digital portrait of an original fictional character. ` +
+    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
 
   if (character.isExplicit) {
@@ -204,7 +194,7 @@ async function generatePollinationsImage(
 // whole request immediately.
 async function withPollinationsRetry<T>(
   fn: () => Promise<T>,
-  maxAttempts = 2
+  maxAttempts = 3
 ): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -264,7 +254,29 @@ async function generateAvatarImage(
   const errors: string[] = [];
   const t0 = Date.now();
 
-  // Try Pollinations first (free, keyless, uncensored, FLUX model)
+  // Try Hugging Face first when configured. On Render specifically,
+  // Pollinations' free tier shares a "1 in-flight request per source IP"
+  // limit with whatever else is on that IP, so it 429s/queues far more
+  // often here than it does locally — tried second instead of first so a
+  // congested Pollinations doesn't eat the whole request's time budget
+  // before a reliable provider ever gets a turn.
+  if (isHuggingFaceConfigured()) {
+    const hfStart = Date.now();
+    try {
+      const bytes = await generateHuggingFaceImageWithSize(prompt, 512, 512, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      console.log(`[avatar] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[avatar] Hugging Face failed after ${Date.now() - hfStart}ms, falling back to Pollinations:`, msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
+  // Fallback: Pollinations (free, keyless, uncensored, FLUX model)
   const pollStart = Date.now();
   try {
     const bytes = await withPollinationsRetry(() =>
@@ -284,7 +296,7 @@ async function generateAvatarImage(
     errors.push(`pollinations: ${msg}`);
   }
 
-  // Final fallback: Cloudflare Workers AI
+  // Last-resort fallback: Cloudflare Workers AI
   if (isCloudflareConfigured()) {
     const cfStart = Date.now();
     try {
@@ -301,36 +313,14 @@ async function generateAvatarImage(
     }
   }
 
-  // Last-resort fallback: Hugging Face Inference API (free tier, shared queue,
-  // so it's slower/less reliable than the other two — tried last on purpose).
-  if (isHuggingFaceConfigured()) {
-    const hfStart = Date.now();
-    try {
-      const bytes = await generateHuggingFaceImageWithSize(prompt, 512, 512, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[avatar] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[avatar] Hugging Face failed after ${Date.now() - hfStart}ms:`, msg);
-      errors.push(`huggingface: ${msg}`);
-    }
-  }
-
   throw new Error("All image providers failed: " + errors.join("; "));
 }
 
 // Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
 function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
-  const personalityDesc = character.personality ? `with a ${character.personality} personality` : "";
-  const taglineDesc = character.tagline
-    ? `, embodying ${character.tagline}`
-    : "";
   const base =
-    `Cinematic scene featuring an original fictional character ` +
-    `${personalityDesc}${taglineDesc}. ` +
+    `Cinematic scene featuring an original fictional character. ` +
+    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
 
   if (character.isExplicit) {
@@ -354,7 +344,30 @@ async function generateSceneImage(
   const errors: string[] = [];
   const t0 = Date.now();
 
-  // Try Pollinations first (exact width/height, keyless, FLUX model)
+  // Try Hugging Face first when configured — see the comment in
+  // generateAvatarImage above for why Pollinations is demoted to second
+  // on Render specifically (shared-IP queue congestion). Note this ignores
+  // the requested width/height when the model doesn't support it
+  // server-side — generateHuggingFaceImageWithSize still passes them
+  // through as a best effort (SD 2.1 does honor width/height, unlike
+  // Cloudflare's SDXL-Lightning).
+  if (isHuggingFaceConfigured()) {
+    const hfStart = Date.now();
+    try {
+      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
+      if (await isBlankOrBlockedImage(bytes)) {
+        throw new Error("returned a blank/blocked image (likely safety filter)");
+      }
+      console.log(`[scene] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
+      return { bytes, provider: "huggingface" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[scene] Hugging Face failed after ${Date.now() - hfStart}ms, falling back to Pollinations:`, msg);
+      errors.push(`huggingface: ${msg}`);
+    }
+  }
+
+  // Fallback: Pollinations (exact width/height, keyless, FLUX model)
   const pollStart = Date.now();
   try {
     const bytes = await withPollinationsRetry(() =>
@@ -371,7 +384,7 @@ async function generateSceneImage(
     errors.push(`pollinations: ${msg}`);
   }
 
-  // Final fallback: Cloudflare Workers AI. Note this ignores width/height
+  // Last-resort fallback: Cloudflare Workers AI. Note this ignores width/height
   // (SDXL-Lightning outputs a fixed ~1024x1024) — callers that need an exact
   // aspect ratio should resize downstream, same as the rest of this codebase
   // already does with sharp.
@@ -388,26 +401,6 @@ async function generateSceneImage(
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[scene] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
       errors.push(`cloudflare: ${msg}`);
-    }
-  }
-
-  // Last-resort fallback: Hugging Face Inference API. Note this ignores the
-  // requested width/height when the model doesn't support it server-side —
-  // generateHuggingFaceImageWithSize still passes them through as a best
-  // effort (SD 2.1 does honor width/height, unlike Cloudflare's SDXL-Lightning).
-  if (isHuggingFaceConfigured()) {
-    const hfStart = Date.now();
-    try {
-      const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[scene] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
-      return { bytes, provider: "huggingface" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[scene] Hugging Face failed after ${Date.now() - hfStart}ms:`, msg);
-      errors.push(`huggingface: ${msg}`);
     }
   }
 
@@ -556,7 +549,7 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   const { w, h } = aspectMap[aspect] || { w: 1024, h: 1024 };
 
   const scenePrompt = customPrompt || buildSceneImagePrompt(character);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
 
   // Check cache first for near-instant repeat generation
   const key = cacheKey(scenePrompt, w, h);
@@ -599,7 +592,7 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const body = req.body ?? {};
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildImagePrompt(character, customPrompt);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
 
   // Check cache first for near-instant repeat generation
   const sizesEnv = (process.env.AVATAR_SIZES || "1024x1024").split(",").map((s) => s.trim());
@@ -655,13 +648,9 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
 function buildBackgroundPrompt(
   character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
 ) {
-  const personalityDesc = character.personality ? `with a ${character.personality} mood and atmosphere` : "";
-  const taglineDesc = character.tagline
-    ? `, inspired by ${character.tagline}`
-    : "";
   const base =
-    `A stunning atmospheric background scene ` +
-    `${personalityDesc}${taglineDesc}. ` +
+    `A stunning atmospheric background scene. ` +
+    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
 
@@ -692,7 +681,7 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 4000) : undefined;
   const prompt = customPrompt || buildBackgroundPrompt(character);
 
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "18") * 1000;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "30") * 1000;
 
   // Rate limit
   const limit = checkRateLimit(`background:${userId}`, 10, 60);
