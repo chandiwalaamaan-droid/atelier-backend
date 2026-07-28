@@ -31,7 +31,8 @@ export function isCloudflareConfigured(): boolean {
  */
 export async function generateCloudflareImage(
   prompt: string,
-  timeoutMs: number
+  timeoutMs: number,
+  negativePrompt?: string
 ): Promise<Buffer> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -51,7 +52,9 @@ export async function generateCloudflareImage(
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(
+        negativePrompt ? { prompt, negative_prompt: negativePrompt } : { prompt }
+      ),
       signal: controller.signal,
     });
   } catch (err) {

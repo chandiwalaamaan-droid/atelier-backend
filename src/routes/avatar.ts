@@ -41,6 +41,31 @@ function setCachedImage(key: string, buffer: Buffer): void {
 
 const router = Router();
 
+// ---------------------------------------------------------------------------
+// Anti-text-rendering guardrails.
+//
+// FLUX (Pollinations) and SDXL-Lightning (Cloudflare) are both strong at
+// rendering legible text — strong enough that a prompt containing a proper
+// noun, or phrasing like "a character named X" / "titled X", is frequently
+// read as "there is a sign/label/caption reading X" and the model paints
+// the literal name as typography instead of a face. That's the "avatar is
+// just the character's name written in giant letters" bug.
+//
+// Two changes fix this:
+//   1. Never put the character's name (or any other literal string we don't
+//      want rendered) in the main positive prompt. It adds no visual
+//      information — it's just a token the model can choose to draw.
+//   2. Use each provider's real negative-prompt channel to suppress text.
+//      Stuffing "no text" into the *positive* prompt often backfires
+//      (diffusion models don't handle negation well and may render the
+//      word "text" itself), so this must go through negative_prompt, not
+//      string concatenation into `prompt`.
+// ---------------------------------------------------------------------------
+const NO_TEXT_NEGATIVE_PROMPT =
+  "text, words, letters, writing, caption, captions, title, watermark, logo, " +
+  "signature, label, labels, typography, subtitles, name tag, speech bubble, " +
+  "quote, font, alphabet, lettering";
+
 const ALLOWED_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -87,15 +112,19 @@ function buildImagePrompt(
     return customPrompt.trim().slice(0, 4000);
   }
 
+  // NOTE: deliberately no character name/proper noun here — see
+  // NO_TEXT_NEGATIVE_PROMPT comment above. The visual traits below are all
+  // the model needs; the name is just a label the app uses, not something
+  // it should ever try to paint into the image.
   const base =
-    `A highly polished digital portrait of a fictional character named ${character.name}. ` +
+    `A highly polished digital portrait of an original fictional character. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
 
   if (character.isExplicit) {
     return (
       `${base} Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. ` +
-      `Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements.`
+      `Keep the image portrait-focused, elegant, and polished, with no distracting elements.`
     );
   }
 
@@ -125,6 +154,7 @@ async function generatePollinationsImage(
     // portraits actually match the persona instead of getting blocked.
     safe: character.isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
+    negative_prompt: NO_TEXT_NEGATIVE_PROMPT,
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
@@ -248,7 +278,7 @@ async function generateAvatarImage(
   if (isCloudflareConfigured()) {
     const cfStart = Date.now();
     try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs);
+      const bytes = await generateCloudflareImage(prompt, timeoutMs, NO_TEXT_NEGATIVE_PROMPT);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
@@ -285,14 +315,14 @@ async function generateAvatarImage(
 // Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
 function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
   const base =
-    `Cinematic scene featuring ${character.name}. ` +
+    `Cinematic scene featuring an original fictional character. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
 
   if (character.isExplicit) {
     return (
       `${base} Mature adult scene, sensual atmosphere, intimate moment, tasteful but uninhibited. ` +
-      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks.`
+      `Focus on emotion, chemistry, and physical connection. High quality, polished.`
     );
   }
 
@@ -334,7 +364,7 @@ async function generateSceneImage(
   if (isCloudflareConfigured()) {
     const cfStart = Date.now();
     try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs);
+      const bytes = await generateCloudflareImage(prompt, timeoutMs, NO_TEXT_NEGATIVE_PROMPT);
       if (await isBlankOrBlockedImage(bytes)) {
         throw new Error("returned a blank/blocked image (likely safety filter)");
       }
@@ -396,7 +426,7 @@ async function generateHuggingFaceImageWithSize(
       },
       body: JSON.stringify({
         inputs: prompt,
-        parameters: { width, height },
+        parameters: { width, height, negative_prompt: NO_TEXT_NEGATIVE_PROMPT },
         options: { wait_for_model: true },
       }),
       signal: controller.signal,
@@ -445,6 +475,7 @@ async function generatePollinationsSceneImage(
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
+    negative_prompt: NO_TEXT_NEGATIVE_PROMPT,
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
@@ -611,7 +642,7 @@ function buildBackgroundPrompt(
   character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
 ) {
   const base =
-    `A stunning atmospheric background scene for a character named ${character.name}. ` +
+    `A stunning atmospheric background scene. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
