@@ -6,7 +6,6 @@ import { getCurrentUserId } from "../lib/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/cloudinary";
-import { isTensorArtConfigured, generateTensorArtImage } from "../lib/providers/tensorart";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
 
 // In-memory cache for recently generated images (keyed by prompt hash)
@@ -223,22 +222,7 @@ async function generateAvatarImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Try Tensor.Art first (free API key, uncensored)
-  if (isTensorArtConfigured()) {
-    try {
-      const bytes = await generateTensorArtImage(prompt, 1024, 1024, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      return { bytes, provider: "tensorart" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Tensor.Art failed, falling back to Pollinations:", msg);
-      errors.push(`tensorart: ${msg}`);
-    }
-  }
-
-  // Fallback to Pollinations (free, keyless, uncensored, Flux-backed)
+  // Try Pollinations first (free, keyless, uncensored, FLUX model)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
@@ -298,21 +282,7 @@ async function generateSceneImage(
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
-  // Tensor.Art first (free API key, uncensored)
-  if (isTensorArtConfigured()) {
-    try {
-      const bytes = await generateTensorArtImage(prompt, width, height, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      return { bytes, provider: "tensorart" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`tensorart: ${msg}`);
-    }
-  }
-
-  // Pollinations second (unrestricted mode, exact width/height, keyless)
+  // Try Pollinations first (exact width/height, keyless, FLUX model)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
