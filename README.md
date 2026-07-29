@@ -9,7 +9,7 @@ Express + TypeScript app — no Next.js in here at all.
 Handles: auth (signup/login/logout, JWT session cookie), character CRUD,
 avatar upload + free AI generation (Pollinations.ai, no key needed), and the
 streaming chat endpoint with the free-provider fallback chain
-(Groq → SambaNova → NVIDIA → Ollama).
+(Groq → SambaNova → NVIDIA → Cloudflare → Ollama).
 
 ## Why split like this
 
@@ -114,7 +114,7 @@ authenticated request (debounced to once per 6h per user — see
 - `src/lib/auth.ts` — JWT session cookie creation/verification (cross-site config)
 - `src/lib/db.ts` — Prisma client
 - `src/lib/rateLimit.ts` — in-memory rate limiter for login/signup/chat
-- `src/lib/providers/` — NVIDIA, SambaNova, Groq, Ollama clients + fallback orchestrator
+- `src/lib/providers/` — NVIDIA, SambaNova, Groq, Cloudflare (chat), Ollama clients + fallback orchestrator
 - `prisma/schema.prisma` — `User`, `Character`, `Message` tables (unchanged)
 
 ## Turning on billing (Razorpay) later

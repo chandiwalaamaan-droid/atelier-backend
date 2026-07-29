@@ -246,12 +246,12 @@ const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds:
 const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
-// TEMPORARY — testing Cloudflare Workers AI (Llama 4 Scout) as a chat
-// provider on a fresh account. Wired first in the chain on purpose so it
-// actually gets exercised by real traffic while we check explicit-mode
-// behavior; move it to its proper speed-ranked slot (or pull it out
-// entirely) once that's confirmed. See cloudflareChat.ts for details.
-const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat (TESTING)", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
+// Cloudflare Workers AI (Llama 4 Scout) — confirmed working and permissive
+// enough for explicit-mode content, but slower to respond than Groq/
+// SambaNova/NVIDIA (~9-10s observed vs a few seconds for the others), so it
+// sits after NVIDIA rather than up front. Still ahead of Ollama since it's
+// a real hosted fallback with its own concurrency. See cloudflareChat.ts.
+const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
 
 type Candidate = {
   name: string;
@@ -264,22 +264,6 @@ type Candidate = {
 /** Rebuilt per call (cheap) so newly-added/removed env keys are picked up without a restart; breaker state itself lives in the module-level singletons above, not here. */
 function buildChain(): Candidate[] {
   const chain: Candidate[] = [];
-
-  // TEMPORARY — see the comment on cloudflareChatBreaker above. This is
-  // pinned to the front of the chain purely so it gets tested against real
-  // traffic right now; it is NOT meant to stay first once explicit-mode
-  // behavior is confirmed.
-  if (isCloudflareChatConfigured()) {
-    chain.push({
-      name: cloudflareChatBreaker.name,
-      breaker: cloudflareChatBreaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) =>
-        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal),
-      complete: (messages) =>
-        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS),
-    });
-  }
 
   // Groq is tried first: it runs on custom fast-inference silicon (Groq's
   // LPU) and consistently beats NVIDIA's generic GPU-based NIM endpoints
@@ -325,6 +309,23 @@ function buildChain(): Candidate[] {
       complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS),
     });
   });
+
+  // Cloudflare Workers AI (Llama 4 Scout) — confirmed working in
+  // production and permissive enough for explicit-mode content, but the
+  // slowest of the hosted providers (~9-10s observed), so it goes after
+  // NVIDIA. Still ahead of Ollama: it's a real hosted fallback with its
+  // own concurrency, not tied to this machine's hardware.
+  if (isCloudflareChatConfigured()) {
+    chain.push({
+      name: cloudflareChatBreaker.name,
+      breaker: cloudflareChatBreaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) =>
+        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal),
+      complete: (messages) =>
+        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS),
+    });
+  }
 
   chain.push({
     name: "ollama",

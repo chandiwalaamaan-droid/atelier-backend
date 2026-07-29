@@ -15,12 +15,12 @@ import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./open
 // is the same raw, lightly-tuned Llama family the rest of this fallback
 // chain already relies on for explicit-mode permissiveness.
 //
-// THIS PROVIDER IS UNVERIFIED for explicit-mode content specifically.
-// Cloudflare's docs don't clearly state whether any default-on moderation
-// applies to raw /ai/run or /ai/v1 chat calls (as opposed to the opt-in
-// Guardrails/Firewall-for-AI product, which is off unless you turn it on
-// in the dashboard). Test with a real explicit-mode prompt before trusting
-// this in the primary rotation for real traffic.
+// THIS PROVIDER: confirmed working in production and responding to
+// explicit-mode content without refusing (tested manually). Cloudflare's
+// docs don't document a default-on moderation layer for raw /ai/run or
+// /ai/v1 chat calls — that's an opt-in product (Guardrails/Firewall for
+// AI) that has to be turned on in the dashboard — which matches what was
+// observed.
 const DEFAULT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 const MODEL = process.env.CLOUDFLARE_CHAT_MODEL || DEFAULT_MODEL;
 
