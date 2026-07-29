@@ -17,6 +17,86 @@
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
+// ---------------------------------------------------------------------------
+// Reasoning-model "thinking" tag stripping
+// ---------------------------------------------------------------------------
+// Reasoning-capable models (Qwen 3.x, DeepSeek-R1-style, etc.) can emit their
+// internal chain-of-thought inline in the content stream, wrapped in
+// <think>...</think>. The primary defense is asking the provider not to send
+// it at all (Groq's reasoning_format: "hidden" — see groq.ts), but that's a
+// provider-specific opt-in and has been reported to occasionally leak
+// anyway, so this is a second, generic layer: it strips any <think>...
+// </think> span out of the text before it ever reaches onToken() or gets
+// saved to the DB, regardless of which provider or model produced it.
+//
+// Tags can arrive split across multiple stream chunks (e.g. one chunk ends
+// with "<th" and the next starts with "ink>"), so this can't just be a
+// per-chunk regex — it's a small state machine that holds back only the
+// minimum ambiguous suffix between chunks.
+function longestTagPrefixSuffix(text: string, tag: string): number {
+  const max = Math.min(text.length, tag.length - 1);
+  for (let len = max; len > 0; len--) {
+    if (text.endsWith(tag.slice(0, len))) return len;
+  }
+  return 0;
+}
+
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
+
+function createThinkTagFilter() {
+  let pending = "";
+  let inThink = false;
+
+  function feed(chunk: string): string {
+    pending += chunk;
+    let out = "";
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (!inThink) {
+        const idx = pending.indexOf(THINK_OPEN);
+        if (idx === -1) {
+          const holdBack = longestTagPrefixSuffix(pending, THINK_OPEN);
+          out += pending.slice(0, pending.length - holdBack);
+          pending = pending.slice(pending.length - holdBack);
+          break;
+        }
+        out += pending.slice(0, idx);
+        pending = pending.slice(idx + THINK_OPEN.length);
+        inThink = true;
+      } else {
+        const idx = pending.indexOf(THINK_CLOSE);
+        if (idx === -1) {
+          const holdBack = longestTagPrefixSuffix(pending, THINK_CLOSE);
+          // Everything except a possible partial closing tag is discarded —
+          // it's inside the thinking block.
+          pending = pending.slice(pending.length - holdBack);
+          break;
+        }
+        pending = pending.slice(idx + THINK_CLOSE.length);
+        inThink = false;
+      }
+    }
+    return out;
+  }
+
+  // Anything still buffered when the stream ends is either plain trailing
+  // text (safe to emit) or an unterminated <think> block (safe to drop —
+  // it was never meant to be visible anyway).
+  function flush(): string {
+    const leftover = inThink ? "" : pending;
+    pending = "";
+    return leftover;
+  }
+
+  return { feed, flush };
+}
+
+/** Non-streaming variant: the full text is already in hand, so a simple global strip is enough. */
+function stripThinkTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+}
+
 async function readErrorBody(res: Response): Promise<string> {
   // Fold the response body into the thrown error so ProviderBreaker.trip()
   // can parse a provider's own "retry in Xs" hint out of it, instead of
@@ -32,7 +112,8 @@ export async function streamOpenAICompatibleChat(
   messages: ChatMessage[],
   onToken: (chunk: string) => void,
   timeoutMs: number,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  extraBody?: Record<string, unknown>
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
@@ -52,6 +133,8 @@ export async function streamOpenAICompatibleChat(
     if (!firstTokenReceived) controller.abort();
   }, timeoutMs);
 
+  const thinkFilter = createThinkTagFilter();
+
   try {
     let res: Response;
     try {
@@ -61,7 +144,7 @@ export async function streamOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: true }),
+        body: JSON.stringify({ model, messages, stream: true, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -120,11 +203,20 @@ export async function streamOpenAICompatibleChat(
             firstTokenReceived = true;
             clearTimeout(timer);
           }
-          fullText += token;
-          onToken(token);
+          const visible = thinkFilter.feed(token);
+          if (visible) {
+            fullText += visible;
+            onToken(visible);
+          }
         }
       }
       if (clientAborted) return fullText;
+    }
+
+    const remainder = thinkFilter.flush();
+    if (remainder) {
+      fullText += remainder;
+      onToken(remainder);
     }
 
     return fullText;
@@ -139,7 +231,8 @@ export async function completeOpenAICompatibleChat(
   apiKey: string,
   model: string,
   messages: ChatMessage[],
-  timeoutMs: number
+  timeoutMs: number,
+  extraBody?: Record<string, unknown>
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -153,7 +246,7 @@ export async function completeOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: false }),
+        body: JSON.stringify({ model, messages, stream: false, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -169,7 +262,8 @@ export async function completeOpenAICompatibleChat(
     }
 
     const data = await res.json();
-    return data?.choices?.[0]?.message?.content ?? "";
+    const text: string = data?.choices?.[0]?.message?.content ?? "";
+    return stripThinkTags(text);
   } finally {
     clearTimeout(timer);
   }

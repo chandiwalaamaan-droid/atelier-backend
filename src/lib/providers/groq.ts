@@ -34,6 +34,15 @@ export function getGroqKeys(): { key: string; slot: number }[] {
     .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
 }
 
+// Qwen's "thinking mode" reasoning tokens are wrapped in <think>...</think>
+// and, if not suppressed, get sent as regular content — which is what was
+// showing up inline in chat replies. reasoning_format: "hidden" tells Groq
+// to keep that reasoning server-side and only return the final answer. This
+// param is specific to Qwen models on Groq (gpt-oss models use a different
+// include_reasoning flag instead), so it's only sent when GROQ_MODEL is a
+// Qwen model — sending it for other models could cause a 400.
+const REASONING_EXTRA_BODY = MODEL.startsWith("qwen/") ? { reasoning_format: "hidden" } : undefined;
+
 export async function streamGroqChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
@@ -41,7 +50,7 @@ export async function streamGroqChat(
   timeoutMs: number,
   clientSignal?: AbortSignal
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, REASONING_EXTRA_BODY);
 }
 
 export async function completeGroqChat(
@@ -49,7 +58,7 @@ export async function completeGroqChat(
   apiKey: string,
   timeoutMs: number
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs);
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, REASONING_EXTRA_BODY);
 }
 
 // ---------------------------------------------------------------------------
