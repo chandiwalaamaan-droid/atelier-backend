@@ -65,7 +65,7 @@ services:
       - key: CEREBRAS_API_KEY_2
         sync: false
       - key: CEREBRAS_MODEL
-        value: "llama-3.3-70b"
+        value: "zai-glm-4.7"
       - key: SAMBANOVA_API_KEY
         sync: false
       - key: SAMBANOVA_API_KEY_2

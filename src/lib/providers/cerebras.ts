@@ -2,14 +2,30 @@ import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./open
 
 /**
  * Cerebras (https://cloud.cerebras.ai) — free tier, no credit card, 1M
- * tokens/day, generous rate limit. Added as a hosted slot between NVIDIA
- * and Ollama: another shot at a fast hosted reply before dropping down to
- * the local-only fallback. Their free model catalog changes more often
- * than Groq's or NVIDIA's — if CEREBRAS_MODEL 404s, check
- * https://inference-docs.cerebras.ai for the current free list.
+ * tokens/day, generous rate limit. Added as a hosted slot: another shot at
+ * a fast hosted reply before dropping down to the local-only fallback.
+ *
+ * Their free model catalog changes often — llama-3.3-70b (this app's
+ * previous default) and qwen-3-32b were both deprecated by Cerebras on
+ * 2026-02-16, and llama3.1-8b followed on 2026-05-27. As of this writing the
+ * only two models left on Cerebras are gpt-oss-120b and zai-glm-4.7.
+ * gpt-oss-120b is deliberately avoided here for the same reason noted for
+ * Groq in ./index.ts — it has refusals baked in deep and resists this app's
+ * explicit/NSFW roleplay mode even with a permissive system prompt.
+ * zai-glm-4.7 is used instead: it's a raw, unfiltered model, and Cerebras's
+ * own migration notes highlight "improved role play and general chat
+ * quality" for it specifically. If CEREBRAS_MODEL 404s in the future, check
+ * https://inference-docs.cerebras.ai for the current list.
  */
 const BASE_URL = "https://api.cerebras.ai/v1";
-const MODEL = process.env.CEREBRAS_MODEL || "llama-3.3-70b";
+const MODEL = process.env.CEREBRAS_MODEL || "zai-glm-4.7";
+
+// zai-glm-4.7 reasons by default, which both adds latency (an extra
+// "thinking" pass before the real reply starts) and would otherwise need
+// the same <think>-tag stripping as Qwen on Groq. reasoning_effort: "none"
+// turns that off at the source. This is a no-op (and harmless) for other
+// models that don't support the field.
+const REASONING_EXTRA_BODY = MODEL === "zai-glm-4.7" ? { reasoning_effort: "none" } : undefined;
 
 export function isCerebrasConfigured() {
   return Boolean(process.env.CEREBRAS_API_KEY);
@@ -39,7 +55,7 @@ export async function streamCerebrasChat(
   timeoutMs: number,
   clientSignal?: AbortSignal
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, REASONING_EXTRA_BODY);
 }
 
 export async function completeCerebrasChat(
@@ -47,5 +63,5 @@ export async function completeCerebrasChat(
   apiKey: string,
   timeoutMs: number
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs);
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, REASONING_EXTRA_BODY);
 }
