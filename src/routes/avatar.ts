@@ -5,9 +5,9 @@ import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
-import { uploadAvatarBuffer } from "../lib/b2";
+import { uploadAvatarBuffer } from "../lib/cloudinary";
+import { generateHuggingFaceImage, isHuggingFaceConfigured } from "../lib/providers/huggingface";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
-import { isHuggingFaceConfigured } from "../lib/providers/huggingface";
 
 // In-memory cache for recently generated images (keyed by prompt hash)
 // Reduces duplicate generation and improves perceived speed.
@@ -40,31 +40,6 @@ function setCachedImage(key: string, buffer: Buffer): void {
 }
 
 const router = Router();
-
-// ---------------------------------------------------------------------------
-// Anti-text-rendering guardrails.
-//
-// FLUX (Pollinations) and SDXL-Lightning (Cloudflare) are both strong at
-// rendering legible text — strong enough that a prompt containing a proper
-// noun, or phrasing like "a character named X" / "titled X", is frequently
-// read as "there is a sign/label/caption reading X" and the model paints
-// the literal name as typography instead of a face. That's the "avatar is
-// just the character's name written in giant letters" bug.
-//
-// Two changes fix this:
-//   1. Never put the character's name (or any other literal string we don't
-//      want rendered) in the main positive prompt. It adds no visual
-//      information — it's just a token the model can choose to draw.
-//   2. Use each provider's real negative-prompt channel to suppress text.
-//      Stuffing "no text" into the *positive* prompt often backfires
-//      (diffusion models don't handle negation well and may render the
-//      word "text" itself), so this must go through negative_prompt, not
-//      string concatenation into `prompt`.
-// ---------------------------------------------------------------------------
-const NO_TEXT_NEGATIVE_PROMPT =
-  "text, words, letters, writing, caption, captions, title, watermark, logo, " +
-  "signature, label, labels, typography, subtitles, name tag, speech bubble, " +
-  "quote, font, alphabet, lettering";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/png": "png",
@@ -112,19 +87,15 @@ function buildImagePrompt(
     return customPrompt.trim().slice(0, 4000);
   }
 
-  // NOTE: deliberately no character name/proper noun here — see
-  // NO_TEXT_NEGATIVE_PROMPT comment above. The visual traits below are all
-  // the model needs; the name is just a label the app uses, not something
-  // it should ever try to paint into the image.
   const base =
-    `A highly polished digital portrait of an original fictional character. ` +
+    `A highly polished digital portrait of a fictional character named ${character.name}. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
 
   if (character.isExplicit) {
     return (
       `${base} Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. ` +
-      `Keep the image portrait-focused, elegant, and polished, with no distracting elements.`
+      `Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements.`
     );
   }
 
@@ -154,7 +125,6 @@ async function generatePollinationsImage(
     // portraits actually match the persona instead of getting blocked.
     safe: character.isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
-    negative_prompt: NO_TEXT_NEGATIVE_PROMPT,
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
@@ -213,38 +183,17 @@ async function withPollinationsRetry<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Some providers' safety filters don't throw an error for blocked/explicit
-// prompts — they silently return a solid black (or flat gray/white) image
-// as a "successful" response. Since that's valid image bytes, the normal
-// try/catch fallback logic never sees it as a failure. This check inspects
-// the actual pixel statistics to catch that case and treat it as a failure
-// so the caller falls through to the next provider instead of serving a
-// blank image to the user.
-async function isBlankOrBlockedImage(bytes: Buffer): Promise<boolean> {
-  try {
-    // Downscale first — stats() on a huge image is wasteful, and we only
-    // need a coarse signal, not per-pixel precision.
-    const { channels } = await sharp(bytes).resize(32, 32, { fit: "fill" }).stats();
-    const rgb = channels.slice(0, 3); // ignore alpha if present
-    if (rgb.length === 0) return false;
-
-    const allNearBlack = rgb.every((c) => c.mean < 12);
-    const allFlat = rgb.every((c) => c.stdev < 3); // solid color: black, white, or gray placeholder
-    return allNearBlack || allFlat;
-  } catch {
-    // If we can't even parse the image, something's wrong with it — treat
-    // as blocked/broken rather than silently serving whatever this is.
-    return true;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Enhanced image-gen fallback chain: Tensor.Art -> Pollinations -> Cloudflare.
-// Each provider's output is checked for blank/safety-filtered results (see
-// isBlankOrBlockedImage above) before being accepted — a blank image counts
-// as a failure and moves on to the next provider, same as a thrown error.
-// Set TENSOR_ART_API_KEY to use Tensor.Art as primary; otherwise Pollinations
-// (keyless) is used first.
+// Enhanced image-gen fallback chain, ordered by generation freedom + quality:
+// 1. Pollinations first — supports unrestricted mode (safe:false) for
+//    explicit personas, and matches HF's Flux-family quality.
+// 2. Hugging Face second — open FLUX model, no baked-in content policy,
+//    comparable quality to Pollinations.
+// 3. Cloudflare Workers AI last — a mainstream managed API, most likely to
+//    filter/reject explicit prompts and has no permissive-mode toggle; kept
+//    purely as a last-resort safety net (and it's fixed-aspect + slightly
+//    lower quality than the Flux-family models above).
+// (Order below: HF -> Cloudflare -> Pollinations, per explicit request.)
 // ---------------------------------------------------------------------------
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
@@ -252,65 +201,41 @@ async function generateAvatarImage(
   timeoutMs: number
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
-  const t0 = Date.now();
 
-  // Try Hugging Face first when configured. On Render specifically,
-  // Pollinations' free tier shares a "1 in-flight request per source IP"
-  // limit with whatever else is on that IP, so it 429s/queues far more
-  // often here than it does locally — tried second instead of first so a
-  // congested Pollinations doesn't eat the whole request's time budget
-  // before a reliable provider ever gets a turn.
+  // Try Hugging Face first if configured
   if (isHuggingFaceConfigured()) {
-    const hfStart = Date.now();
     try {
-      const bytes = await generateHuggingFaceImageWithSize(prompt, 512, 512, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[avatar] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
+      const bytes = await generateHuggingFaceImage(prompt, timeoutMs);
       return { bytes, provider: "huggingface" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[avatar] Hugging Face failed after ${Date.now() - hfStart}ms, falling back to Pollinations:`, msg);
+      console.warn("[avatar] Hugging Face failed, falling back to Cloudflare:", msg);
       errors.push(`huggingface: ${msg}`);
     }
   }
 
-  // Fallback: Pollinations (free, keyless, uncensored, FLUX model)
-  const pollStart = Date.now();
+  // Fallback to Cloudflare Workers AI if configured
+  if (isCloudflareConfigured()) {
+    try {
+      const bytes = await generateCloudflareImage(prompt, timeoutMs);
+      return { bytes, provider: "cloudflare" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[avatar] Cloudflare Workers AI failed, falling back to Pollinations:", msg);
+      errors.push(`cloudflare: ${msg}`);
+    }
+  }
+
+  // Final fallback: Pollinations (unrestricted mode for explicit personas, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
       generatePollinationsImage(character, prompt, timeoutMs)
     );
-    if (await isBlankOrBlockedImage(bytes)) {
-      throw new Error("returned a blank/blocked image (likely safety filter)");
-    }
-    console.log(`[avatar] pollinations answered in ${Date.now() - pollStart}ms (total ${Date.now() - t0}ms)`);
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[avatar] Pollinations failed after ${Date.now() - pollStart}ms, falling back to Cloudflare:`,
-      msg
-    );
+    console.warn("[avatar] Pollinations failed:", msg);
     errors.push(`pollinations: ${msg}`);
-  }
-
-  // Last-resort fallback: Cloudflare Workers AI
-  if (isCloudflareConfigured()) {
-    const cfStart = Date.now();
-    try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs, NO_TEXT_NEGATIVE_PROMPT);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[avatar] cloudflare answered in ${Date.now() - cfStart}ms (total ${Date.now() - t0}ms)`);
-      return { bytes, provider: "cloudflare" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[avatar] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
-      errors.push(`cloudflare: ${msg}`);
-    }
   }
 
   throw new Error("All image providers failed: " + errors.join("; "));
@@ -319,14 +244,14 @@ async function generateAvatarImage(
 // Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
 function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
   const base =
-    `Cinematic scene featuring an original fictional character. ` +
+    `Cinematic scene featuring ${character.name}. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
 
   if (character.isExplicit) {
     return (
       `${base} Mature adult scene, sensual atmosphere, intimate moment, tasteful but uninhibited. ` +
-      `Focus on emotion, chemistry, and physical connection. High quality, polished.`
+      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks.`
     );
   }
 
@@ -342,66 +267,41 @@ async function generateSceneImage(
   timeoutMs: number
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
-  const t0 = Date.now();
 
-  // Try Hugging Face first when configured — see the comment in
-  // generateAvatarImage above for why Pollinations is demoted to second
-  // on Render specifically (shared-IP queue congestion). Note this ignores
-  // the requested width/height when the model doesn't support it
-  // server-side — generateHuggingFaceImageWithSize still passes them
-  // through as a best effort (SD 2.1 does honor width/height, unlike
-  // Cloudflare's SDXL-Lightning).
+  // Hugging Face first (open model, no content policy)
   if (isHuggingFaceConfigured()) {
-    const hfStart = Date.now();
     try {
       const bytes = await generateHuggingFaceImageWithSize(prompt, width, height, timeoutMs);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[scene] huggingface answered in ${Date.now() - hfStart}ms (total ${Date.now() - t0}ms)`);
       return { bytes, provider: "huggingface" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[scene] Hugging Face failed after ${Date.now() - hfStart}ms, falling back to Pollinations:`, msg);
       errors.push(`huggingface: ${msg}`);
     }
   }
 
-  // Fallback: Pollinations (exact width/height, keyless, FLUX model)
-  const pollStart = Date.now();
-  try {
-    const bytes = await withPollinationsRetry(() =>
-      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
-    );
-    if (await isBlankOrBlockedImage(bytes)) {
-      throw new Error("returned a blank/blocked image (likely safety filter)");
-    }
-    console.log(`[scene] pollinations answered in ${Date.now() - pollStart}ms (total ${Date.now() - t0}ms)`);
-    return { bytes, provider: "pollinations" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[scene] Pollinations failed after ${Date.now() - pollStart}ms:`, msg);
-    errors.push(`pollinations: ${msg}`);
-  }
-
-  // Last-resort fallback: Cloudflare Workers AI. Note this ignores width/height
+  // Cloudflare Workers AI second. Note this ignores width/height
   // (SDXL-Lightning outputs a fixed ~1024x1024) — callers that need an exact
   // aspect ratio should resize downstream, same as the rest of this codebase
   // already does with sharp.
   if (isCloudflareConfigured()) {
-    const cfStart = Date.now();
     try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs, NO_TEXT_NEGATIVE_PROMPT);
-      if (await isBlankOrBlockedImage(bytes)) {
-        throw new Error("returned a blank/blocked image (likely safety filter)");
-      }
-      console.log(`[scene] cloudflare answered in ${Date.now() - cfStart}ms (total ${Date.now() - t0}ms)`);
+      const bytes = await generateCloudflareImage(prompt, timeoutMs);
       return { bytes, provider: "cloudflare" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[scene] Cloudflare Workers AI failed after ${Date.now() - cfStart}ms:`, msg);
       errors.push(`cloudflare: ${msg}`);
     }
+  }
+
+  // Final fallback: Pollinations (unrestricted mode, exact width/height, keyless)
+  try {
+    const bytes = await withPollinationsRetry(() =>
+      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
+    );
+    return { bytes, provider: "pollinations" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errors.push(`pollinations: ${msg}`);
   }
 
   throw new Error("All image providers failed: " + errors.join("; "));
@@ -433,7 +333,7 @@ async function generateHuggingFaceImageWithSize(
       },
       body: JSON.stringify({
         inputs: prompt,
-        parameters: { width, height, negative_prompt: NO_TEXT_NEGATIVE_PROMPT },
+        parameters: { width, height },
         options: { wait_for_model: true },
       }),
       signal: controller.signal,
@@ -449,17 +349,13 @@ async function generateHuggingFaceImageWithSize(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(
-      `Hugging Face API error ${res.status} [model=${model}, url=${url}]: ${errText.slice(0, 300)}`
-    );
+    throw new Error(`Hugging Face API error ${res.status}: ${errText.slice(0, 300)}`);
   }
 
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.startsWith("image/")) {
     const errText = await res.text().catch(() => "");
-    throw new Error(
-      `Hugging Face returned non-image response [model=${model}]: ${errText.slice(0, 300)}`
-    );
+    throw new Error(`Hugging Face returned non-image response: ${errText.slice(0, 300)}`);
   }
 
   const arrayBuffer = await res.arrayBuffer();
@@ -482,7 +378,6 @@ async function generatePollinationsSceneImage(
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
-    negative_prompt: NO_TEXT_NEGATIVE_PROMPT,
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
@@ -649,7 +544,7 @@ function buildBackgroundPrompt(
   character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
 ) {
   const base =
-    `A stunning atmospheric background scene. ` +
+    `A stunning atmospheric background scene for a character named ${character.name}. ` +
     `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
@@ -693,18 +588,15 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   // Use scene image generation with landscape dimensions for backgrounds
   let result: { bytes: Buffer; provider: string };
   try {
-    // Generate at 1024x576 (16:9) to avoid timeouts — Pollinations struggles
-    // with 1920x1080 within the default timeout. We resize to 1920x1080 below.
-    result = await generateSceneImage(prompt, 1024, 576, character.isExplicit, timeoutMs);
+    // 16:9 landscape for background
+    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs);
   } catch (err) {
     console.error("Background image generation failed", err);
     return res.status(502).json({ error: "Background image generation failed. Try again with a different prompt." });
   }
 
-  // Strip metadata and resize to 1920x1080 for crisp wide backgrounds
-  const cleanBytes = await sharp(result.bytes)
-    .resize(1920, 1080, { fit: "cover", withoutEnlargement: true })
-    .toBuffer();
+  // Strip metadata
+  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
   const publicId = `${req.params.id}-${Date.now()}-bg`;
   const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });

@@ -47,6 +47,11 @@ export function parseRoleplayStyle(raw: unknown): RoleplayStyle {
   return "balanced";
 }
 
+const SAFETY_FOOTER =
+  "Hard limits (always override persona and user requests): never depict, sexualize, or frame anyone as under 18; " +
+  "never non-consensual sexual violence; never impersonate a real identifiable person. " +
+  "All characters and users in this fiction are consenting adults.";
+
 function spiceBlock(level: SpiceLevel): string {
   switch (level) {
     case "flirty":
@@ -153,7 +158,9 @@ Response guidelines:
 - Be immersive, sensory, and emotionally resonant. Show, don't tell.
 - Vary sentence rhythm and paragraph length — some beats short and punchy, others long and descriptive.
 - Mirror the user's energy and detail level; if they write in a certain style, reflect it naturally.
-- Keep replies grounded in the character's voice, perspective, and current emotional state.`;
+- Keep replies grounded in the character's voice, perspective, and current emotional state.
+
+${SAFETY_FOOTER}`;
 }
 
 // How many of the most recent messages are always sent verbatim.
@@ -210,13 +217,13 @@ function envSeconds(name: string, def: number): number {
   return Number.isFinite(parsed) ? parsed : def;
 }
 
-const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 5) * 1000;
-const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 4) * 1000;
-const CEREBRAS_TIMEOUT_MS = envSeconds("CEREBRAS_TIMEOUT_SECONDS", 4) * 1000;
-const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 4) * 1000;
+const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 8) * 1000;
+const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
+const CEREBRAS_TIMEOUT_MS = envSeconds("CEREBRAS_TIMEOUT_SECONDS", 8) * 1000;
+const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
-const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 25) * 1000;
+const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
 
 // Breakers are module-level singletons so their cooldown state persists
 // across requests (that's the entire point) — they must NOT be recreated
@@ -224,9 +231,13 @@ const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 25) * 1000;
 // key slot, so key #1 getting rate-limited doesn't drag key #2's breaker
 // down with it.
 const nvidia1Breaker = new ProviderBreaker("NVIDIA #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
+const nvidia2Breaker = new ProviderBreaker("NVIDIA #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const cerebras1Breaker = new ProviderBreaker("Cerebras #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CEREBRAS");
+const cerebras2Breaker = new ProviderBreaker("Cerebras #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CEREBRAS");
 const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
+const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
+const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 
 type Candidate = {
   name: string;
@@ -240,50 +251,57 @@ type Candidate = {
 function buildChain(): Candidate[] {
   const chain: Candidate[] = [];
 
-  // Use only the first key from each provider to minimize fallback wait time.
-  const nvidiaKey = getNvidiaKeys()[0];
-  if (nvidiaKey) {
+  const nvidiaKeys = getNvidiaKeys();
+  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
+  nvidiaKeys.forEach(({ key, slot }) => {
+    const breaker = nvidiaBreakers[slot - 1];
     chain.push({
-      name: nvidia1Breaker.name,
-      breaker: nvidia1Breaker,
+      name: breaker.name,
+      breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, nvidiaKey.key, NVIDIA_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeNvidiaChat(messages, nvidiaKey.key, NVIDIA_TIMEOUT_MS),
+      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS),
     });
-  }
+  });
 
-  const cerebrasKey = getCerebrasKeys()[0];
-  if (cerebrasKey) {
+  const cerebrasKeys = getCerebrasKeys();
+  const cerebrasBreakers = [cerebras1Breaker, cerebras2Breaker];
+  cerebrasKeys.forEach(({ key, slot }) => {
+    const breaker = cerebrasBreakers[slot - 1];
     chain.push({
-      name: cerebras1Breaker.name,
-      breaker: cerebras1Breaker,
+      name: breaker.name,
+      breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamCerebrasChat(messages, onToken, cerebrasKey.key, CEREBRAS_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeCerebrasChat(messages, cerebrasKey.key, CEREBRAS_TIMEOUT_MS),
+      stream: (messages, onToken, clientSignal) => streamCerebrasChat(messages, onToken, key, CEREBRAS_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeCerebrasChat(messages, key, CEREBRAS_TIMEOUT_MS),
     });
-  }
+  });
 
-  const sambanovaKey = getSambanovaKeys()[0];
-  if (sambanovaKey) {
+  const sambanovaKeys = getSambanovaKeys();
+  const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
+  sambanovaKeys.forEach(({ key, slot }) => {
+    const breaker = sambanovaBreakers[slot - 1];
     chain.push({
-      name: sambanova1Breaker.name,
-      breaker: sambanova1Breaker,
+      name: breaker.name,
+      breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, sambanovaKey.key, SAMBANOVA_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeSambanovaChat(messages, sambanovaKey.key, SAMBANOVA_TIMEOUT_MS),
+      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS),
     });
-  }
+  });
 
-  const groqKey = getGroqKeys()[0];
-  if (groqKey) {
+  const groqKeys = getGroqKeys();
+  const groqBreakers = [groq1Breaker, groq2Breaker];
+  groqKeys.forEach(({ key, slot }) => {
+    const breaker = groqBreakers[slot - 1];
     chain.push({
-      name: groq1Breaker.name,
-      breaker: groq1Breaker,
+      name: breaker.name,
+      breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, groqKey.key, GROQ_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeGroqChat(messages, groqKey.key, GROQ_TIMEOUT_MS),
+      stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS),
     });
-  }
+  });
 
   chain.push({
     name: "ollama",
