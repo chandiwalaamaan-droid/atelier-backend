@@ -42,13 +42,17 @@ services:
       - key: B2_ENDPOINT
         sync: false
       # Avatar image generation — Pollinations (already free/keyless) is
-      # primary; this is the fallback used only if Pollinations fails.
-      # Free token from huggingface.co.
-      - key: HUGGINGFACE_API_KEY
+      # primary; AI Horde (see aihorde.ts) is the fallback used if
+      # Pollinations fails. Works anonymously with no key at all — only set
+      # AI_HORDE_API_KEY if you register a free account at aihorde.net for
+      # better queue priority.
+      - key: AI_HORDE_API_KEY
         sync: false
-      - key: HUGGINGFACE_IMAGE_MODEL
-        value: "black-forest-labs/FLUX.1-schnell"
-      # Cloudflare Workers AI — second image-gen fallback (see cloudflare.ts).
+      # Async job + poll, so it gets its own longer timeout instead of
+      # IMAGE_GEN_TIMEOUT_SECONDS below.
+      - key: AI_HORDE_TIMEOUT_SECONDS
+        value: "90"
+      # Cloudflare Workers AI — third/last-resort image-gen fallback (see cloudflare.ts).
       - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
       - key: CLOUDFLARE_API_TOKEN
