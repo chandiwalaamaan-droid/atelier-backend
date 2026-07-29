@@ -12,6 +12,7 @@ import {
 import type { TtsVoice } from "./groq";
 import { streamNvidiaChat, completeNvidiaChat, isNvidiaConfigured, getNvidiaKeys } from "./nvidia";
 import { streamSambanovaChat, completeSambanovaChat, isSambanovaConfigured, getSambanovaKeys } from "./sambanova";
+import { streamCloudflareChat, completeCloudflareChat, isCloudflareChatConfigured } from "./cloudflareChat";
 import { streamOllamaChat, completeOllamaChat, isOllamaAvailable } from "./ollama";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "./circuitBreaker";
 
@@ -229,6 +230,7 @@ function envSeconds(name: string, def: number): number {
 const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 8) * 1000;
 const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
 const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
+const CLOUDFLARE_CHAT_TIMEOUT_MS = envSeconds("CLOUDFLARE_CHAT_TIMEOUT_SECONDS", 8) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
 const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
@@ -244,6 +246,12 @@ const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds:
 const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
+// TEMPORARY — testing Cloudflare Workers AI (Llama 4 Scout) as a chat
+// provider on a fresh account. Wired first in the chain on purpose so it
+// actually gets exercised by real traffic while we check explicit-mode
+// behavior; move it to its proper speed-ranked slot (or pull it out
+// entirely) once that's confirmed. See cloudflareChat.ts for details.
+const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat (TESTING)", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
 
 type Candidate = {
   name: string;
@@ -256,6 +264,22 @@ type Candidate = {
 /** Rebuilt per call (cheap) so newly-added/removed env keys are picked up without a restart; breaker state itself lives in the module-level singletons above, not here. */
 function buildChain(): Candidate[] {
   const chain: Candidate[] = [];
+
+  // TEMPORARY — see the comment on cloudflareChatBreaker above. This is
+  // pinned to the front of the chain purely so it gets tested against real
+  // traffic right now; it is NOT meant to stay first once explicit-mode
+  // behavior is confirmed.
+  if (isCloudflareChatConfigured()) {
+    chain.push({
+      name: cloudflareChatBreaker.name,
+      breaker: cloudflareChatBreaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) =>
+        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal),
+      complete: (messages) =>
+        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS),
+    });
+  }
 
   // Groq is tried first: it runs on custom fast-inference silicon (Groq's
   // LPU) and consistently beats NVIDIA's generic GPU-based NIM endpoints
