@@ -5,7 +5,7 @@ import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
-import { uploadAvatarBuffer } from "../lib/cloudinary";
+import { uploadAvatarBuffer } from "../lib/b2";
 import { generateHuggingFaceImage, isHuggingFaceConfigured } from "../lib/providers/huggingface";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
 

@@ -27,12 +27,19 @@ services:
       - key: FRONTEND_URL
         sync: false
       # Avatar hosting (uploaded + AI-generated images). Free account at
-      # cloudinary.com — no persistent disk needed, images survive restarts.
-      - key: CLOUDINARY_CLOUD_NAME
+      # backblaze.com/b2 (10GB free) — no persistent disk needed, images
+      # survive restarts. Key id/app key from the Application Keys page,
+      # bucket name/endpoint from the bucket's own page. Bucket can stay
+      # PRIVATE — the backend proxies/streams images itself via
+      # /api/images/:key (see src/routes/images.ts), so no card-on-file is
+      # needed for B2's first-public-bucket verification.
+      - key: B2_KEY_ID
         sync: false
-      - key: CLOUDINARY_API_KEY
+      - key: B2_APPLICATION_KEY
         sync: false
-      - key: CLOUDINARY_API_SECRET
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: B2_ENDPOINT
         sync: false
       # Avatar image generation — Pollinations (already free/keyless) is
       # primary; this is the fallback used only if Pollinations fails.
@@ -55,10 +62,16 @@ services:
         value: "meta/llama-3.1-70b-instruct"
       - key: CEREBRAS_API_KEY
         sync: false
+      - key: CEREBRAS_API_KEY_2
+        sync: false
       - key: CEREBRAS_MODEL
         value: "llama-3.3-70b"
-      - key: OPENAI_API_KEY
+      - key: SAMBANOVA_API_KEY
         sync: false
+      - key: SAMBANOVA_API_KEY_2
+        sync: false
+      - key: SAMBANOVA_MODEL
+        value: "Meta-Llama-3.3-70B-Instruct"
       - key: NODE_ENV
         value: "production"
       # Billing (Razorpay) — everything in src/routes/billing.ts 503s unless
