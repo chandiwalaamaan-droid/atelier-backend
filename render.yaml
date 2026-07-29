@@ -48,6 +48,13 @@ services:
         sync: false
       - key: HUGGINGFACE_IMAGE_MODEL
         value: "black-forest-labs/FLUX.1-schnell"
+      # Cloudflare Workers AI — second image-gen fallback (see cloudflare.ts).
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_IMAGE_MODEL
+        value: "@cf/bytedance/stable-diffusion-xl-lightning"
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_KEY_2
@@ -67,6 +74,12 @@ services:
         sync: false
       - key: SAMBANOVA_MODEL
         value: "Meta-Llama-3.3-70B-Instruct"
+      - key: CLOUDFLARE_CHAT_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_CHAT_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_CHAT_MODEL
+        value: "@cf/meta/llama-4-scout-17b-16e-instruct"
       - key: NODE_ENV
         value: "production"
       # Billing (Razorpay) — everything in src/routes/billing.ts 503s unless

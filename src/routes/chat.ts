@@ -20,6 +20,7 @@ import {
   parseRoleplayStyle,
 } from "../lib/providers";
 import type { TtsVoice } from "../lib/providers";
+import { getEngineConfig } from "../lib/providers/engines";
 
 const router = Router();
 
@@ -76,9 +77,19 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const userMessage = typeof body.message === "string" ? body.message.trim().slice(0, MAX_MESSAGE_LENGTH) : "";
   // explicitMode is controlled by the chat UI toggle. Any signed-in user may
   // enable it for their private conversations — not limited to isExplicit characters.
-  const explicitMode = body.explicitMode === true;
-  const spiceLevel = explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
-  const roleplayStyle = explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
+  // If the client sent a named engine id (from the roleplay-engine picker),
+  // its config is the source of truth — explicitMode/spiceLevel/
+  // roleplayStyle/voiceNotes/temperature all come from this fixed,
+  // server-owned list (see providers/engines.ts), not from the client
+  // directly. Falls back to the older raw explicitMode/spiceLevel/
+  // roleplayStyle body fields for any client that isn't sending an
+  // engineId yet (manual slider mode).
+  const engine = getEngineConfig(body.engineId);
+  const explicitMode = engine ? engine.explicitMode : body.explicitMode === true;
+  const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
+  const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
+  const voiceNotes = engine?.voiceNotes;
+  const genParams = engine ? { temperature: engine.temperature, topP: engine.topP } : undefined;
   const sceneDirective =
     typeof body.sceneDirective === "string" ? body.sceneDirective.trim().slice(0, 500) : undefined;
 
@@ -157,6 +168,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     spiceLevel,
     roleplayStyle,
     sceneDirective,
+    voiceNotes,
   });
   const chatMessages = [
     { role: "system" as const, content: system },
@@ -192,7 +204,8 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
         // reading the network tab. The toast on the client is generic.
         res.write(encodeEvent({ type: "failover" }));
       },
-      stopController.signal
+      stopController.signal,
+      genParams
     );
 
     if (fullText.trim().length > 0) {

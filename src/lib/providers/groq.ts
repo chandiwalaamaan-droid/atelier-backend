@@ -1,4 +1,5 @@
 import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./openaiCompatible";
+import type { GenParams } from "./index";
 
 const BASE_URL = "https://api.groq.com/openai/v1";
 // llama-3.3-70b-versatile was deprecated by Groq on 2026-06-17 and is slated
@@ -43,22 +44,31 @@ export function getGroqKeys(): { key: string; slot: number }[] {
 // Qwen model — sending it for other models could cause a 400.
 const REASONING_EXTRA_BODY = MODEL.startsWith("qwen/") ? { reasoning_format: "hidden" } : undefined;
 
+function genParamsExtraBody(params?: GenParams): Record<string, unknown> | undefined {
+  const body: Record<string, unknown> = { ...REASONING_EXTRA_BODY };
+  if (params?.temperature !== undefined) body.temperature = params.temperature;
+  if (params?.topP !== undefined) body.top_p = params.topP;
+  return Object.keys(body).length ? body : undefined;
+}
+
 export async function streamGroqChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
   apiKey: string,
   timeoutMs: number,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, REASONING_EXTRA_BODY);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
 }
 
 export async function completeGroqChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   apiKey: string,
-  timeoutMs: number
+  timeoutMs: number,
+  params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, REASONING_EXTRA_BODY);
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
 }
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,17 @@
  * one machine can actually process at a time. This is the always-available
  * floor of the fallback chain — tried last, after every hosted provider.
  */
+import type { GenParams } from "./index";
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 const MODEL = process.env.OLLAMA_MODEL || "llama3.1";
+
+function genParamsOptions(params?: GenParams): Record<string, unknown> | undefined {
+  const options: Record<string, unknown> = {};
+  if (params?.temperature !== undefined) options.temperature = params.temperature;
+  if (params?.topP !== undefined) options.top_p = params.topP;
+  return Object.keys(options).length ? options : undefined;
+}
 
 export async function isOllamaAvailable(): Promise<boolean> {
   try {
@@ -22,7 +30,8 @@ export async function streamOllamaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
   timeoutMs: number,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  params?: GenParams
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
@@ -46,7 +55,7 @@ export async function streamOllamaChat(
       res = await fetch(`${BASE_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: MODEL, messages, stream: true }),
+        body: JSON.stringify({ model: MODEL, messages, stream: true, options: genParamsOptions(params) }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -116,7 +125,8 @@ export async function streamOllamaChat(
 
 export async function completeOllamaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
-  timeoutMs: number
+  timeoutMs: number,
+  params?: GenParams
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -127,7 +137,7 @@ export async function completeOllamaChat(
       res = await fetch(`${BASE_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: MODEL, messages, stream: false }),
+        body: JSON.stringify({ model: MODEL, messages, stream: false, options: genParamsOptions(params) }),
         signal: controller.signal,
       });
     } catch (err) {

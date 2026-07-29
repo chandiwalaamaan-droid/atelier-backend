@@ -1,4 +1,5 @@
 import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./openaiCompatible";
+import type { GenParams } from "./index";
 
 // Cloudflare Workers AI — TEXT chat, via their OpenAI-compatible endpoint
 // (https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1). This
@@ -34,20 +35,29 @@ export function isCloudflareChatConfigured(): boolean {
   return Boolean(process.env.CLOUDFLARE_CHAT_ACCOUNT_ID && process.env.CLOUDFLARE_CHAT_API_TOKEN);
 }
 
+function genParamsExtraBody(params?: GenParams): Record<string, unknown> | undefined {
+  const body: Record<string, unknown> = {};
+  if (params?.temperature !== undefined) body.temperature = params.temperature;
+  if (params?.topP !== undefined) body.top_p = params.topP;
+  return Object.keys(body).length ? body : undefined;
+}
+
 export async function streamCloudflareChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
   apiKey: string,
   timeoutMs: number,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, onToken, timeoutMs, clientSignal);
+  return streamOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
 }
 
 export async function completeCloudflareChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   apiKey: string,
-  timeoutMs: number
+  timeoutMs: number,
+  params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, timeoutMs);
+  return completeOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
 }

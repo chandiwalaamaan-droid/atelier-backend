@@ -1,4 +1,5 @@
 import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./openaiCompatible";
+import type { GenParams } from "./index";
 
 const BASE_URL = "https://integrate.api.nvidia.com/v1";
 const MODEL = process.env.NVIDIA_MODEL || "meta/llama-3.1-70b-instruct";
@@ -22,20 +23,29 @@ export function getNvidiaKeys(): { key: string; slot: number }[] {
     .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
 }
 
+function genParamsExtraBody(params?: GenParams): Record<string, unknown> | undefined {
+  const body: Record<string, unknown> = {};
+  if (params?.temperature !== undefined) body.temperature = params.temperature;
+  if (params?.topP !== undefined) body.top_p = params.topP;
+  return Object.keys(body).length ? body : undefined;
+}
+
 export async function streamNvidiaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   onToken: (chunk: string) => void,
   apiKey: string,
   timeoutMs: number,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
 }
 
 export async function completeNvidiaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   apiKey: string,
-  timeoutMs: number
+  timeoutMs: number,
+  params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs);
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
 }
