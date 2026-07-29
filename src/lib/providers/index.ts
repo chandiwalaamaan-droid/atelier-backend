@@ -172,8 +172,8 @@ export const SUMMARIZE_TRIGGER = 28;
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     NVIDIA #1 -> NVIDIA #2 -> Cerebras #1 -> Cerebras #2 ->
-//     SambaNova #1 -> SambaNova #2 -> Groq #1 -> Groq #2 -> Ollama
+//     Cerebras #1 -> Cerebras #2 -> Groq #1 -> Groq #2 ->
+//     SambaNova #1 -> SambaNova #2 -> NVIDIA #1 -> NVIDIA #2 -> Ollama
 //
 // NVIDIA #2 / Cerebras #2 / SambaNova #2 / Groq #2 are optional second API
 // keys (NVIDIA_API_KEY_2 / CEREBRAS_API_KEY_2 / SAMBANOVA_API_KEY_2 /
@@ -184,23 +184,29 @@ export const SUMMARIZE_TRIGGER = 28;
 // all four hosted providers configured meaningfully multiplies the request
 // headroom before falling back to Ollama.
 //
-// NVIDIA, Cerebras, and SambaNova are grouped first and in that order
-// because all three serve a raw Meta Llama model with no extra safety layer
-// applied server-side — this app supports an explicit/NSFW roleplay mode,
-// and Llama goes along with mature fictional content far more readily than
-// some hosted alternatives, like Groq's now-deprecated llama-3.3-70b-versatile
-// replacement option openai/gpt-oss-120b, which has refusals baked in deep
-// and resists explicit-mode content even with a permissive system prompt.
-// GROQ_MODEL defaults to qwen/qwen3.6-27b instead (see ./groq.ts) precisely
-// to avoid that — so Groq gets slotted in with the other raw-model
-// providers rather than treated as a fallback-of-last-resort. If GROQ_MODEL
-// is ever pointed at gpt-oss or another safety-layered model, it's worth
-// reconsidering this order.
+// Cerebras, Groq, and SambaNova are grouped first — in that order, by
+// speed — because all three serve a raw Meta Llama model with no extra
+// safety layer applied server-side, same as NVIDIA. This app supports an
+// explicit/NSFW roleplay mode, and Llama goes along with mature fictional
+// content far more readily than some hosted alternatives, like Groq's
+// now-deprecated llama-3.3-70b-versatile replacement option
+// openai/gpt-oss-120b, which has refusals baked in deep and resists
+// explicit-mode content even with a permissive system prompt. GROQ_MODEL
+// defaults to qwen/qwen3.6-27b instead (see ./groq.ts) precisely to avoid
+// that. If GROQ_MODEL is ever pointed at gpt-oss or another safety-layered
+// model, it's worth reconsidering this order.
 //
-// Every hosted slot (NVIDIA, Cerebras, Groq) has its own circuit breaker
-// (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop
-// paying its timeout on every single request and skip it for a cooldown
-// window instead. Ollama doesn't get a breaker — it already checks
+// NVIDIA is placed after the other three hosted slots specifically for
+// latency: its NIM endpoints run on generic GPU inference and are
+// consistently slower to first token than Cerebras's wafer-scale engine,
+// Groq's LPU, or SambaNova's RDU chips — often by several seconds. It's
+// still ahead of Ollama since it's a real hosted fallback with its own
+// concurrency, just not the fastest one available.
+//
+// Every hosted slot (NVIDIA, Cerebras, Groq, SambaNova) has its own circuit
+// breaker (see circuitBreaker.ts): if a slot is rate-limited or hanging, we
+// stop paying its timeout on every single request and skip it for a
+// cooldown window instead. Ollama doesn't get a breaker — it already checks
 // isOllamaAvailable() before every attempt, and as the always-available
 // local floor there's no "cooldown" that makes sense for it.
 //
@@ -251,19 +257,13 @@ type Candidate = {
 function buildChain(): Candidate[] {
   const chain: Candidate[] = [];
 
-  const nvidiaKeys = getNvidiaKeys();
-  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
-  nvidiaKeys.forEach(({ key, slot }) => {
-    const breaker = nvidiaBreakers[slot - 1];
-    chain.push({
-      name: breaker.name,
-      breaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS),
-    });
-  });
-
+  // Cerebras and Groq are tried first: both run on custom fast-inference
+  // silicon (Cerebras's wafer-scale engine, Groq's LPU) and consistently
+  // beat NVIDIA's generic GPU-based NIM endpoints on time-to-first-token —
+  // often by several seconds. SambaNova's RDU chips are also fast. NVIDIA
+  // is pushed later in the chain purely for latency; all four still serve
+  // the same raw, unfiltered Llama-family models, so this doesn't change
+  // explicit-mode permissiveness at all.
   const cerebrasKeys = getCerebrasKeys();
   const cerebrasBreakers = [cerebras1Breaker, cerebras2Breaker];
   cerebrasKeys.forEach(({ key, slot }) => {
@@ -274,6 +274,19 @@ function buildChain(): Candidate[] {
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamCerebrasChat(messages, onToken, key, CEREBRAS_TIMEOUT_MS, clientSignal),
       complete: (messages) => completeCerebrasChat(messages, key, CEREBRAS_TIMEOUT_MS),
+    });
+  });
+
+  const groqKeys = getGroqKeys();
+  const groqBreakers = [groq1Breaker, groq2Breaker];
+  groqKeys.forEach(({ key, slot }) => {
+    const breaker = groqBreakers[slot - 1];
+    chain.push({
+      name: breaker.name,
+      breaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS),
     });
   });
 
@@ -290,16 +303,16 @@ function buildChain(): Candidate[] {
     });
   });
 
-  const groqKeys = getGroqKeys();
-  const groqBreakers = [groq1Breaker, groq2Breaker];
-  groqKeys.forEach(({ key, slot }) => {
-    const breaker = groqBreakers[slot - 1];
+  const nvidiaKeys = getNvidiaKeys();
+  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
+  nvidiaKeys.forEach(({ key, slot }) => {
+    const breaker = nvidiaBreakers[slot - 1];
     chain.push({
       name: breaker.name,
       breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS, clientSignal),
-      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS),
+      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal),
+      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS),
     });
   });
 
