@@ -37,9 +37,7 @@
     "razorpay": "^2.9.8",
     "sharp": "^0.33.5",
     "typescript": "5.9.3",
+    "tsx": "^4.16.2",
     "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "tsx": "^4.16.2"
   }
 }
