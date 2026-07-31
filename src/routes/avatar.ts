@@ -15,8 +15,10 @@ const imageCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_CACHE_ENTRIES = 200;
 
-function cacheKey(prompt: string, width: number, height: number): string {
-  return `${width}x${height}:${prompt.toLowerCase().replace(/\s+/g, " ").trim()}`;
+function cacheKey(prompt: string, width: number, height: number, imageUrl?: string): string {
+  const base = `${width}x${height}:${prompt.toLowerCase().replace(/\s+/g, " ").trim()}`;
+  if (!imageUrl) return base;
+  return `${base}:img=${encodeURIComponent(imageUrl)}`;
 }
 
 async function getCachedImage(key: string): Promise<Buffer | null> {
@@ -89,11 +91,24 @@ router.post("/:id/avatar", upload.single("avatar"), asyncHandler(async (req, res
 //                        should never stand in for this when it exists.
 //   3. Fallback       — reconstructed from tagline/personality when neither
 //                        of the above is available (legacy characters).
-// In every case we append a short technical/quality suffix — even exact
-// user text benefits from render-quality guidance, and omitting it produces
-// noticeably worse output for no benefit to prompt fidelity.
-const AVATAR_QUALITY_SUFFIX =
-  "Cinematic lighting, ultra-detailed rendering, crisp focus, professional digital portrait quality, no text, no watermark.";
+//
+// Quality suffixes are split into neutral and style-specific variants so
+// user-requested styles like "anime" or "cartoon" aren't overwritten by
+// photorealism terms like "cinematic lighting" or "digital portrait quality."
+const NEUTRAL_QUALITY_SUFFIX = "Highly detailed, crisp focus, clean composition, no text, no watermark, no signature, no logo.";
+const REALISTIC_QUALITY_SUFFIX = "Cinematic lighting, ultra-detailed rendering, crisp focus, professional digital portrait quality, smooth skin tones, no text, no watermark.";
+const ANIME_QUALITY_SUFFIX = "Vibrant anime style, clean lines, expressive eyes, cel-shaded or painterly anime aesthetic, high quality anime illustration, no text, no watermark.";
+const CARTOON_QUALITY_SUFFIX = "Bold cartoon style, thick outlines, flat colors, expressive caricature, graphic illustration style, no text, no watermark.";
+const PAINTING_QUALITY_SUFFIX = "Rich painterly style, visible brushstrokes, artistic composition, gallery-quality artwork, no text, no watermark.";
+
+function detectStyle(prompt: string): string {
+  const lower = prompt.toLowerCase();
+  if (/\banime\b|\bmanga\b|\bchibi\b/.test(lower)) return "anime";
+  if (/\bcartoon\b|\bilustration\b|\bcomic\b|\bvector\b/.test(lower)) return "cartoon";
+  if (/\bpainting\b|\bpainterly\b|\boil paint\b|\bwatercolor\b|\bpixel art\b/.test(lower)) return "painting";
+  if (/\brealistic\b|\bphotorealistic\b|\bphoto\b|\bcinematic\b/.test(lower)) return "realistic";
+  return "neutral";
+}
 
 function buildImagePrompt(
   character: {
@@ -105,31 +120,47 @@ function buildImagePrompt(
   },
   customPrompt?: string
 ) {
+  let corePrompt: string;
+  let style: string;
+
   if (customPrompt?.trim()) {
-    return `${customPrompt.trim()} ${AVATAR_QUALITY_SUFFIX}`.slice(0, 4000);
+    corePrompt = customPrompt.trim();
+    style = detectStyle(customPrompt);
+  } else if (character.avatarPrompt?.trim()) {
+    corePrompt = character.avatarPrompt.trim();
+    style = detectStyle(character.avatarPrompt);
+  } else {
+    const base =
+      `A highly polished digital portrait of a fictional character named ${character.name}. ` +
+      `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+      `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
+
+    if (character.isExplicit) {
+      return (
+        `${base} Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. ` +
+        `Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements.`
+      );
+    }
+
+    return `${base} Beautiful stylized character art with expressive emotion, rich detail, and a professional finish.`;
   }
 
-  if (character.avatarPrompt?.trim()) {
-    // Exact creator-specified appearance, used verbatim as the core subject
-    // description. This is the "as per the user demand" path.
-    return `${character.avatarPrompt.trim()} ${AVATAR_QUALITY_SUFFIX}`.slice(0, 4000);
-  }
+  const suffix =
+    style === "anime"
+      ? ANIME_QUALITY_SUFFIX
+      : style === "cartoon"
+        ? CARTOON_QUALITY_SUFFIX
+        : style === "painting"
+          ? PAINTING_QUALITY_SUFFIX
+          : style === "realistic"
+            ? REALISTIC_QUALITY_SUFFIX
+            : NEUTRAL_QUALITY_SUFFIX;
 
-  const base =
-    `A highly polished digital portrait of a fictional character named ${character.name}. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
-    `Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. `;
+  const explicitSuffix = character.isExplicit
+    ? " Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements."
+    : "";
 
-  if (character.isExplicit) {
-    return (
-      `${base} Mature, alluring adult energy with tasteful sensuality, confident body language, and flattering intimate styling. ` +
-      `Keep the image portrait-focused, elegant, and polished — no text, no watermark, and no distracting elements.`
-    );
-  }
-
-  return (
-    `${base} Beautiful stylized character art with expressive emotion, rich detail, and a professional finish.`
-  );
+  return `${corePrompt} ${suffix}${explicitSuffix}`.slice(0, 4000);
 }
 
 // Pollinations.ai (https://pollinations.ai) — free, keyless, OpenAI-Flux-backed
@@ -141,18 +172,24 @@ const POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt";
 async function generatePollinationsImage(
   character: { isExplicit?: boolean },
   prompt: string,
-  timeoutMs: number
+  timeoutMs: number,
+  style: string = "neutral"
 ): Promise<Buffer> {
+  const model =
+    style === "anime"
+      ? "animagine-xl"
+      : style === "cartoon"
+        ? "stable-diffusion-xl-base-1.0"
+        : "flux";
+
   const params = new URLSearchParams({
     width: "1024",
     height: "1024",
-    model: "flux",
+    model,
     nologo: "true",
-    // Pollinations' "safe" filter defaults to permissive; explicitly mark
-    // non-explicit characters as safe and leave explicit ones unfiltered so
-    // portraits actually match the persona instead of getting blocked.
     safe: character.isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
+    steps: "30",
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
@@ -231,14 +268,15 @@ async function withPollinationsRetry<T>(
 async function generateAvatarImage(
   character: { isExplicit?: boolean },
   prompt: string,
-  timeoutMs: number
+  timeoutMs: number,
+  style: string = "neutral"
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
   // Try Pollinations first (primary)
   try {
     const bytes = await withPollinationsRetry(() =>
-      generatePollinationsImage(character, prompt, timeoutMs)
+      generatePollinationsImage(character, prompt, timeoutMs, style)
     );
     return { bytes, provider: "pollinations" };
   } catch (err) {
@@ -276,15 +314,9 @@ async function generateAvatarImage(
 }
 
 // Scene prompt for in-chat image generation (more cinematic, less portrait-
-// focused). Three ingredients, in order:
-//   1. Identity anchor (avatarPrompt) — keeps the character looking like
-//      themselves from one generated scene to the next, instead of drifting
-//      to a different face/body every time.
-//   2. Style DNA (scenePromptTemplate) — creator-set art style / setting
-//      consistency notes reused across every scene for this character.
-//   3. Exact current scenario (context) — what's actually happening right
-//      now in the conversation, so the image matches this moment rather
-//      than a generic pose.
+// focused). Identity preservation is the #1 priority: the character must look
+// like themselves in every frame, not drift to a different person each time.
+// Structure: identity → style DNA → exact scenario → technical quality.
 function buildSceneImagePrompt(
   character: {
     name: string;
@@ -296,29 +328,47 @@ function buildSceneImagePrompt(
   },
   context?: string
 ) {
-  const identityAnchor = character.avatarPrompt?.trim()
-    ? `${character.name}, who looks exactly like this: ${character.avatarPrompt.trim()}. `
-    : `${character.name}. Traits: ${character.personality}. `;
+  // --- 1. IDENTITY (must come first, must be loud) ---
+  const appearance = character.avatarPrompt?.trim();
+  const identityBlock = appearance
+    ? `CRITICAL IDENTITY PRESERVATION: This is ${character.name}. ` +
+      `Their exact appearance is: ${appearance}. ` +
+      `Face, hair, eyes, body, clothing, and visual style MUST remain [CONSISTENT] with this description. ` +
+      `Do NOT change their look, age, build, or outfit unless the scene explicitly requires it.`
+    : `CRITICAL IDENTITY PRESERVATION: This is ${character.name}. ` +
+      `Traits: ${character.personality}. Tagline: ${character.tagline || "n/a"}. ` +
+      `Their core visual identity must remain [CONSISTENT] across every image.`;
 
-  const styleAnchor = character.scenePromptTemplate?.trim()
-    ? `Consistent art style and setting for every scene with this character: ${character.scenePromptTemplate.trim()}. `
+  // --- 2. STYLE DNA (art style + setting consistency) ---
+  const styleBlock = character.scenePromptTemplate?.trim()
+    ? `STYLE DNA (MANDATORY): ${character.scenePromptTemplate.trim()}. ` +
+      `Camera language, lighting setup, color grading, and environment palette from this template are NON-NEGOTIABLE. ` +
+      `Do not drift to a different aesthetic, era, or background universe.`
     : "";
 
-  const scenario = context?.trim()
-    ? `Exact current scene / moment to depict: ${context.trim().slice(0, 2500)}. `
-    : `Tagline: ${character.tagline || "n/a"}. `;
+  // --- 3. EXACT SCENARIO (what's happening right now) ---
+  const scenarioBlock = context?.trim()
+    ? `EXACT SCENE TO DEPICT: ${context.trim().slice(0, 2500)}. ` +
+      `Show THIS specific moment, pose, interaction, and environment. ` +
+      `Do not invent a different situation, location, or action than what is described above.`
+    : `MOOD: ${character.tagline || "n/a"}. `;
 
-  const base =
-    `Cinematic scene featuring ${identityAnchor}${styleAnchor}${scenario}` +
-    `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k, professional photography, ` +
-    `sharp focus, cinematic composition, film grain, volumetric lighting, intricate details, masterpiece. ` +
-    `Depict the character exactly as described above and keep the scene consistent with the exact moment given — ` +
-    `do not invent a different pose or setting than what's described.`;
+  // --- 4. TECHNICAL QUALITY (placed last so identity/style/scenario aren't drowned out) ---
+  const qualityBlock =
+    `Cinematic composition, dramatic lighting, rich atmosphere, highly detailed, ` +
+    `8k, professional photography, sharp focus, volumetric lighting, intricate details, ` +
+    `masterpiece, film grain, immersive environment. ` +
+    `No text, no watermark, no signature, no logo, no UI elements. ` +
+    `Do not add captions or letterboxing.`;
+
+  const base = `${identityBlock} ${styleBlock} ${scenarioBlock} ${qualityBlock}`;
 
   if (character.isExplicit) {
     return (
-      `${base} Mature adult scene, sensual atmosphere, intimate moment, tasteful but uninhibited. ` +
-      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks, no text.`
+      `${base} ` +
+      `EXPLICIT CONTENT ALLOWED: Mature adult scene, sensual atmosphere, intimate moment, ` +
+      `tasteful but uninhibited. Focus on emotion, chemistry, and physical connection. ` +
+      `Polished, high quality, no watermarks, no text.`
     );
   }
 
@@ -331,14 +381,17 @@ async function generateSceneImage(
   width: number,
   height: number,
   isExplicit: boolean,
-  timeoutMs: number
+  timeoutMs: number,
+  avatarUrl?: string,
+  strength: number = 0.4,
+  style: string = "neutral"
 ): Promise<{ bytes: Buffer; provider: string }> {
   const errors: string[] = [];
 
   // Pollinations first (primary — exact width/height, unrestricted mode, keyless)
   try {
     const bytes = await withPollinationsRetry(() =>
-      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs)
+      generatePollinationsSceneImage(prompt, width, height, isExplicit, timeoutMs, avatarUrl, strength, style)
     );
     return { bytes, provider: "pollinations" };
   } catch (err) {
@@ -350,7 +403,15 @@ async function generateSceneImage(
   if (isAiHordeConfigured()) {
     try {
       const hordeTimeoutMs = Number(process.env.AI_HORDE_TIMEOUT_SECONDS || "90") * 1000;
-      const bytes = await generateAiHordeImage({ isExplicit }, prompt, width, height, hordeTimeoutMs);
+      const bytes = await generateAiHordeImage(
+        { isExplicit },
+        prompt,
+        width,
+        height,
+        hordeTimeoutMs,
+        avatarUrl,
+        strength
+      );
       return { bytes, provider: "aihorde" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -380,18 +441,33 @@ async function generatePollinationsSceneImage(
   width: number,
   height: number,
   isExplicit: boolean,
-  timeoutMs: number
+  timeoutMs: number,
+  avatarUrl?: string,
+  strength: number = 0.4,
+  style: string = "neutral"
 ): Promise<Buffer> {
+  const model =
+    style === "anime"
+      ? "animagine-xl"
+      : style === "cartoon"
+        ? "stable-diffusion-xl-base-1.0"
+        : "flux";
+
   const params = new URLSearchParams({
     width: String(width),
     height: String(height),
-    model: "flux",
+    model,
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
+    steps: "30",
   });
   const apiKey = process.env.POLLINATIONS_API_KEY;
   if (apiKey) params.set("key", apiKey);
+  if (avatarUrl && /^https?:\/\//i.test(avatarUrl)) {
+    params.set("image", avatarUrl);
+    params.set("strength", String(Math.max(0, Math.min(1, strength))));
+  }
 
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
 
@@ -461,12 +537,15 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   // to depict, rather than replacing the identity anchor outright.
   const scenePrompt = buildSceneImagePrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
+  const avatarRef = character.avatarUrl && /^https?:\/\//i.test(character.avatarUrl)
+    ? character.avatarUrl
+    : undefined;
 
   // Check cache first for near-instant repeat generation
-  const key = cacheKey(scenePrompt, w, h);
+  const key = cacheKey(scenePrompt, w, h, avatarRef);
   const cached = await getCachedImage(key);
   if (cached) {
-    const cleanBytes = await sharp(cached).toBuffer().catch(() => cached);
+    const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
     const publicId = `${req.params.id}-${Date.now()}-scene`;
     const imageUrl = await uploadAvatarBuffer(cleanBytes, publicId);
     console.log(`[image] served scene from cache`);
@@ -475,13 +554,14 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
 
   let result: { bytes: Buffer; provider: string };
   try {
-    result = await generateSceneImage(scenePrompt, w, h, character.isExplicit, timeoutMs);
+    const sceneStyle = detectStyle(scenePrompt);
+    result = await generateSceneImage(scenePrompt, w, h, character.isExplicit, timeoutMs, avatarRef, 0.4, sceneStyle);
   } catch (err) {
     console.error("Scene image generation failed", err);
     return res.status(502).json({ error: "Image generation failed. Try again with a different prompt." });
   }
 
-  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
   const publicId = `${req.params.id}-${Date.now()}-scene`;
   const imageUrl = await uploadAvatarBuffer(cleanBytes, publicId);
 
@@ -512,7 +592,7 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const key = cacheKey(prompt, cacheW || 1024, cacheH || 1024);
   const cached = await getCachedImage(key);
   if (cached) {
-    const cleanBytes = await sharp(cached).toBuffer().catch(() => cached);
+    const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
     const publicId = `${req.params.id}-${Date.now()}-generated`;
     const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
     const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
@@ -522,7 +602,8 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
 
   let result: { bytes: Buffer; provider: string };
   try {
-    result = await generateAvatarImage(character, prompt, timeoutMs);
+    const avatarStyle = detectStyle(prompt);
+    result = await generateAvatarImage(character, prompt, timeoutMs, avatarStyle);
   } catch (err) {
     console.error("Image generation failed", err);
     return res.status(502).json({ error: "Image generation failed. Try again, or upload an image instead." });
@@ -534,7 +615,7 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   // generated the image should be recoverable from the file itself.
   // NOTE: sharp strips all metadata by default on output — do NOT call
   // .withMetadata() here, since that opts back into carrying it through.
-  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
 
   const publicId = `${req.params.id}-${Date.now()}-generated`;
   const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
@@ -567,10 +648,14 @@ function buildBackgroundPrompt(
     backstory?: string;
     isExplicit?: boolean;
     avatarPrompt?: string | null;
-  }
+  },
+  customPrompt?: string
 ) {
+  const sourcePrompt = customPrompt || character.avatarPrompt || "";
+  const style = detectStyle(sourcePrompt);
+
   const styleAnchor = character.avatarPrompt?.trim()
-    ? `Visual style/identity reference (do not depict the character themselves, just match the palette, era, and aesthetic): ${character.avatarPrompt.trim()}. `
+    ? `Visual style/identity reference (match the palette, era, and aesthetic; do not depict the character): ${character.avatarPrompt.trim()}. `
     : "";
   const settingHint = character.backstory?.trim()
     ? `Setting/world details to draw from: ${character.backstory.trim().slice(0, 500)}. `
@@ -582,17 +667,23 @@ function buildBackgroundPrompt(
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
 
+  const styleSuffix =
+    style === "anime"
+      ? "Anime background art, vibrant colors, stylized environment, painterly or cel-shaded aesthetic, high quality."
+      : style === "cartoon"
+        ? "Cartoon background style, bold shapes, graphic illustration, flat colors with depth."
+        : style === "painting"
+          ? "Painterly background, visible brushwork, artistic atmosphere, gallery-quality."
+          : "";
+
   if (character.isExplicit) {
     return (
-      `${base} Mature, sensual ambient atmosphere with warm mood lighting, velvety textures, ` +
+      `${base} ${styleSuffix} Mature, sensual ambient atmosphere with warm mood lighting, velvety textures, ` +
       `intimate setting, elegant and tasteful. No explicit nudity, but a seductive, luxurious ambiance.`
     );
   }
 
-  return (
-    `${base} Beautiful, immersive environment with a sense of wonder and emotional depth. ` +
-    `Soft bokeh, natural or fantasy landscape, painterly quality, suitable as a chat wallpaper.`
-  );
+  return `${base} ${styleSuffix} Beautiful, immersive environment with a sense of wonder and emotional depth. Soft bokeh, natural or fantasy landscape, suitable as a chat wallpaper.`;
 }
 
 // POST /api/characters/:id/background/generate — AI-generate a chat background/wallpaper image
@@ -607,7 +698,7 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
 
   const body = req.body ?? {};
   const customPrompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 4000) : undefined;
-  const prompt = customPrompt || buildBackgroundPrompt(character);
+  const prompt = buildBackgroundPrompt(character, customPrompt);
 
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
 
@@ -621,15 +712,18 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   // Use scene image generation with landscape dimensions for backgrounds
   let result: { bytes: Buffer; provider: string };
   try {
-    // 16:9 landscape for background
-    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs);
+    const avatarRef = character.avatarUrl && /^https?:\/\//i.test(character.avatarUrl)
+      ? character.avatarUrl
+      : undefined;
+    const bgStyle = detectStyle(prompt);
+    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs, avatarRef, 0.35, bgStyle);
   } catch (err) {
     console.error("Background image generation failed", err);
     return res.status(502).json({ error: "Background image generation failed. Try again with a different prompt." });
   }
 
   // Strip metadata
-  const cleanBytes = await sharp(result.bytes).toBuffer().catch(() => result.bytes);
+  const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
   const publicId = `${req.params.id}-${Date.now()}-bg`;
   const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });

@@ -56,40 +56,47 @@ async function submitJob(
   width: number,
   height: number,
   nsfw: boolean,
-  apiKey: string
+  apiKey: string,
+  sourceImage?: string,
+  sourceDenoising: number = 0.4
 ): Promise<string> {
   const models = nsfw ? QUALITY_MODELS_NSFW : QUALITY_MODELS;
+
+  const body: Record<string, unknown> = {
+    prompt,
+    nsfw,
+    censor_nsfw: false,
+    models,
+    r2: true,
+    params: {
+      width,
+      height,
+      steps: 30,
+      cfg_scale: 7,
+      sampler_name: "k_euler_a",
+      karras: true,
+      n: 1,
+    },
+  };
+
+  if (sourceImage && /^https?:\/\//i.test(sourceImage)) {
+    body.source_image = sourceImage;
+    body.source_denoising = Math.max(0, Math.min(1, sourceDenoising));
+  }
 
   const res = await fetch(`${AI_HORDE_BASE}/generate/async`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: apiKey },
-    body: JSON.stringify({
-      prompt,
-      nsfw,
-      // We handle content policy via the isExplicit flag ourselves; don't
-      // let Horde additionally re-censor a knowingly-explicit request.
-      censor_nsfw: false,
-      models,
-      r2: true, // return a downloadable URL instead of a giant base64 blob
-      params: {
-        width,
-        height,
-        steps: 30,
-        cfg_scale: 7,
-        sampler_name: "k_euler_a",
-        karras: true,
-        n: 1,
-      },
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     throw new Error(`AI Horde submit failed ${res.status}: ${errText.slice(0, 300)}`);
   }
-  const body = (await res.json()) as { id?: string; message?: string };
-  if (!body.id) throw new Error(`AI Horde did not return a job id: ${body.message || "unknown error"}`);
-  return body.id;
+  const responseBody = (await res.json()) as { id?: string; message?: string };
+  if (!responseBody.id) throw new Error(`AI Horde did not return a job id: ${responseBody.message || "unknown error"}`);
+  return responseBody.id;
 }
 
 async function pollUntilDone(id: string, deadline: number): Promise<void> {
@@ -116,7 +123,9 @@ export async function generateAiHordeImage(
   prompt: string,
   width: number,
   height: number,
-  timeoutMs: number
+  timeoutMs: number,
+  avatarUrl?: string,
+  sourceDenoising: number = 0.4
 ): Promise<Buffer> {
   const apiKey = process.env.AI_HORDE_API_KEY || ANON_API_KEY;
   const nsfw = Boolean(character.isExplicit);
@@ -126,7 +135,7 @@ export async function generateAiHordeImage(
   const w = Math.max(512, Math.min(1024, Math.round(width / 64) * 64));
   const h = Math.max(512, Math.min(1024, Math.round(height / 64) * 64));
 
-  const id = await submitJob(prompt, w, h, nsfw, apiKey);
+  const id = await submitJob(prompt, w, h, nsfw, apiKey, avatarUrl, sourceDenoising);
   await pollUntilDone(id, Date.now() + timeoutMs);
 
   const statusRes = await fetch(`${AI_HORDE_BASE}/generate/status/${id}`);

@@ -98,6 +98,7 @@ async function generateAvatar(char, index) {
     nologo: "true",
     safe: char.isExplicit ? "false" : "true",
     seed: String(1000 + index),
+    steps: "30",
   });
   
   const profileUrl = `${POLLINATIONS_URL}/${encodedPrompt}?${profileParams.toString()}`;
@@ -119,6 +120,7 @@ async function generateBackground(char, index) {
     nologo: "true",
     safe: "true",
     seed: String(2000 + index),
+    steps: "30",
   });
   
   const bgUrl = `${POLLINATIONS_URL}/${encodedPrompt}?${bgParams.toString()}`;

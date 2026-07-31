@@ -92,6 +92,7 @@ async function generateAvatar(character) {
     nologo: "true",
     safe: "true",
     seed: String(Math.floor(Math.random() * 1000000)),
+    steps: "30",
   });
 
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
@@ -130,6 +131,7 @@ async function generateBackground(character) {
     nologo: "true",
     safe: "true",
     seed: String(Math.floor(Math.random() * 1000000)),
+    steps: "30",
   });
 
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;

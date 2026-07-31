@@ -47,6 +47,7 @@ async function generateAvatar(char, index) {
     width: "1024", height: "1024", model: "flux", nologo: "true",
     safe: char.isExplicit ? "false" : "true",
     seed: String(3000 + index),
+    steps: "30",
   });
   const url = `${POLLINATIONS_URL}/${encodedPrompt}?${params}`;
   const path = resolve(OUTPUT_DIR, `${char.name.toLowerCase().replace(/\s+/g, "-")}.png`);
@@ -59,6 +60,7 @@ async function generateBackground(char, index) {
   const params = new URLSearchParams({
     width: "1920", height: "1080", model: "flux", nologo: "true",
     safe: "true", seed: String(4000 + index),
+    steps: "30",
   });
   const url = `${POLLINATIONS_URL}/${encodedPrompt}?${params}`;
   const path = resolve(OUTPUT_DIR, "backgrounds", `${char.name.toLowerCase().replace(/\s+/g, "-")}-bg.png`);
