@@ -3,7 +3,6 @@ import { asyncHandler } from "../lib/asyncHandler";
 import multer from "multer";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
-import { checkRateLimit } from "../lib/rateLimit";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/b2";
 import { generateAiHordeImage, isAiHordeConfigured } from "../lib/providers/aihorde";
@@ -243,18 +242,6 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildAvatarPrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
-  const regenerate = Boolean(body.regenerate);
-
-  const cacheKey = `avatar:${prompt}`;
-  const cached = regenerate ? null : getCachedImage(cacheKey);
-  if (cached) {
-    const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
-    const publicId = `${req.params.id}-${Date.now()}-generated`;
-    const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
-    const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
-    console.log(`[avatar] served from cache`);
-    return res.json({ character: updated });
-  }
 
   let result: { bytes: Buffer; provider: string };
   try {
@@ -269,8 +256,6 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const publicId = `${req.params.id}-${Date.now()}-generated`;
   const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
-
-  setCachedImage(cacheKey, cleanBytes);
 
   console.log(`[avatar] generated via ${result.provider}`);
   return res.json({ character: updated });
@@ -362,25 +347,6 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildBackgroundPrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
-  const regenerate = Boolean(body.regenerate);
-
-  // Rate limit
-  const limit = checkRateLimit(`background:${userId}`, 10, 60);
-  if (limit.limited) {
-    res.set("Retry-After", String(limit.retryAfterSeconds));
-    return res.status(429).json({ error: "Too many image requests. Please slow down a bit." });
-  }
-
-  const cacheKey = `background:${prompt}`;
-  const cached = regenerate ? null : getCachedImage(cacheKey);
-  if (cached) {
-    const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
-    const publicId = `${req.params.id}-${Date.now()}-bg`;
-    const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
-    const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
-    console.log(`[background] served from cache`);
-    return res.json({ character: updated });
-  }
 
   let result: { bytes: Buffer; provider: string };
   try {
@@ -392,9 +358,6 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
 
   let cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
 
-  // Some providers may return a fixed aspect/size despite the requested
-  // dimensions — normalize backgrounds to the intended 16:9 canvas so the
-  // frontend wallpaper slot doesn't get a square image from AI Horde, etc.
   if (cleanBytes.length) {
     cleanBytes = await sharp(cleanBytes)
       .resize(1920, 1080, { fit: "cover" })
@@ -405,8 +368,6 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const publicId = `${req.params.id}-${Date.now()}-bg`;
   const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
   const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
-
-  setCachedImage(cacheKey, cleanBytes);
 
   console.log(`[background] generated via ${result.provider}`);
   return res.json({ character: updated });
