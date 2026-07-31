@@ -23,15 +23,14 @@ const POLL_INTERVAL_MS = 2000;
 // fast/distilled models. The whole reason to use Horde here is to trade
 // Pollinations' speed for a quality tier neither Pollinations nor
 // Cloudflare's SDXL-Lightning reach.
-const QUALITY_MODELS = ["AlbedoBase XL (SDXL)", "Juggernaut XL", "DreamShaper XL", "ICBINP XL"];
+const QUALITY_MODELS = ["stable-diffusion-v1-5", "Deliberate v2", "DreamShaper v7"];
 
 // Same idea, but for isExplicit characters — checkpoints that actually
 // render mature content instead of refusing or silently blanking it.
 const QUALITY_MODELS_NSFW = [
-  "WAI-NSFW-illustrious-SDXL",
-  "AlbedoBase XL (SDXL)",
-  "Juggernaut XL",
-  "DreamShaper XL",
+  "stable-diffusion-v1-5",
+  "Deliberate v2",
+  "DreamShaper v7",
 ];
 
 export function isAiHordeConfigured(): boolean {

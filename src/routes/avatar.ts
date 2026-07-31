@@ -271,7 +271,6 @@ function buildBackgroundPrompt(
     tagline: string;
     backstory?: string;
     isExplicit?: boolean;
-    avatarPrompt?: string | null;
   },
   customPrompt?: string
 ): string {
@@ -282,7 +281,6 @@ function buildBackgroundPrompt(
   const parts = [
     `A background scene for ${character.name}.`,
     character.tagline ? `Tagline: ${character.tagline}.` : null,
-    character.avatarPrompt?.trim() ? `Visual reference: ${character.avatarPrompt.trim()}.` : null,
     character.backstory?.trim() ? `Setting: ${character.backstory.trim().slice(0, 500)}.` : null,
   ].filter(Boolean);
 
@@ -416,47 +414,5 @@ router.delete("/:id/background", asyncHandler(async (req, res) => {
 
   return res.json({ character: updated });
 }));
-
-// In-memory cache for recently generated images
-const imageCache = new Map<string, { buffer: Buffer; expiresAt: number; size: number }>();
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const MAX_CACHE_ENTRIES = 200;
-const MAX_CACHE_BYTES = 300 * 1024 * 1024; // 300 MB
-
-function getCachedImage(key: string): Buffer | null {
-  const entry = imageCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    imageCache.delete(key);
-    return null;
-  }
-  return entry.buffer;
-}
-
-function setCachedImage(key: string, buffer: Buffer): void {
-  if (imageCache.has(key)) return;
-
-  const size = buffer.length;
-  if (size > MAX_CACHE_BYTES) return;
-
-  while (
-    (imageCache.size >= MAX_CACHE_ENTRIES || getTotalCacheBytes() + size > MAX_CACHE_BYTES) &&
-    imageCache.size > 0
-  ) {
-    const oldest = imageCache.keys().next().value;
-    if (oldest === undefined) break;
-    imageCache.delete(oldest);
-  }
-
-  imageCache.set(key, { buffer, expiresAt: Date.now() + CACHE_TTL_MS, size });
-}
-
-function getTotalCacheBytes(): number {
-  let total = 0;
-  for (const entry of imageCache.values()) {
-    total += entry.size;
-  }
-  return total;
-}
 
 export default router;

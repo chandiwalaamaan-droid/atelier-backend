@@ -135,17 +135,12 @@ async function generateBackground(character) {
     return true;
   }
 
-  // Build a background prompt from the scene template
-  const bgPrompt = character.scenePromptTemplate
-    .replace("{scene}", "the character's home environment")
-    .replace("Cinematic scene featuring ", "")
-    .replace(". Current scene:", ",")
-    .replace(". Environment:", ". Environment:")
-    .replace(". Mood:", ". Mood:")
-    .replace(". Include", ". Include")
-    .replace(". Lighting:", ". Lighting:")
-    .replace(". Camera:", ". Camera:")
-    .replace(". Style:", ". Style:") + " Wide landscape, soft focus, dreamy lighting, suitable as a chat wallpaper, no people in foreground, atmospheric.";
+  const bgPrompt =
+    "A stunning atmospheric background scene for " +
+    character.name +
+    ". Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. " +
+    "The scene evokes the character's world and mood without any text, watermarks, or people in the foreground. " +
+    "Beautiful, immersive environment with a sense of wonder and emotional depth. Soft bokeh, natural landscape, painterly quality, suitable as a chat wallpaper, no people in foreground, atmospheric.";
 
   const params = new URLSearchParams({
     width: "1920",

@@ -56,12 +56,14 @@ async function generateAvatar(character) {
         ". Cinematic lighting, ultra-detailed rendering, smooth skin tones, crisp focus, and a refined shoulders-up composition with a clean, subtle background. " +
         "Beautiful stylized character art with expressive emotion, rich detail, and a professional finish. 8k, masterpiece quality, no text, no watermark.";
 
+  const isExplicit = character.isExplicit === true;
+
   const params = new URLSearchParams({
     width: "1024",
     height: "1024",
     model: "flux",
     nologo: "true",
-    safe: "true",
+    safe: isExplicit ? "false" : "true",
     seed: String(Math.floor(Math.random() * 1000000)),
     steps: "30",
   });
@@ -83,12 +85,15 @@ async function generateAvatar(character) {
 async function generateBackground(character) {
   const filePath = path.join(BG_DIR, `${character.slug}-bg.png`);
   const characterData = PROMPT_LOOKUP[character.name];
-  const template =
+
+  const isExplicit = character.isExplicit === true;
+
+  const prompt =
     characterData && characterData.scenePromptTemplate
       ? characterData.scenePromptTemplate.replace("{scene}", "character portrait background")
       : null;
-  const prompt =
-    template ||
+  const bgPrompt =
+    prompt ||
     "A stunning atmospheric background scene for " +
       character.name +
       ". Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. " +
@@ -100,12 +105,12 @@ async function generateBackground(character) {
     height: "1080",
     model: "flux",
     nologo: "true",
-    safe: "true",
+    safe: isExplicit ? "false" : "true",
     seed: String(Math.floor(Math.random() * 1000000)),
     steps: "30",
   });
 
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(bgPrompt)}?${params.toString()}`;
 
   try {
     const buffer = await fetchImage(url);
@@ -121,10 +126,11 @@ async function generateBackground(character) {
 
 async function main() {
   for (const character of TARGETS) {
+    const characterData = PROMPT_LOOKUP[character.name];
     console.log(`\n[${character.name}]`);
-    await generateAvatar(character);
+    await generateAvatar({ ...character, isExplicit: characterData?.isExplicit });
     await delay(DELAY_MS);
-    await generateBackground(character);
+    await generateBackground({ ...character, isExplicit: characterData?.isExplicit });
     await delay(DELAY_MS);
   }
   console.log("\n✅ Targeted regeneration complete.");
