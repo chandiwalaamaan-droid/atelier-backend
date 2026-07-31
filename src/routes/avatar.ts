@@ -5,7 +5,6 @@ import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/b2";
-import { generateAiHordeImage, isAiHordeConfigured } from "../lib/providers/aihorde";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
 
 const router = Router();
@@ -51,7 +50,7 @@ async function generatePollinationsAvatar(
   const params = new URLSearchParams({
     width: "1024",
     height: "1024",
-    model: "flux",
+    model: character.isExplicit ? "vendouple/uncensored-image-enhanced" : "flux",
     nologo: "true",
     safe: character.isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
@@ -96,7 +95,7 @@ async function generatePollinationsBackground(
   const params = new URLSearchParams({
     width: "1920",
     height: "1080",
-    model: "flux",
+    model: isExplicit ? "vendouple/uncensored-image-enhanced" : "flux",
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Date.now() % 1_000_000),
@@ -172,20 +171,8 @@ async function generateAvatarImage(
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to AI Horde:", msg);
+    console.warn("[avatar] Pollinations failed, falling back to Cloudflare:", msg);
     errors.push(`pollinations: ${msg}`);
-  }
-
-  if (isAiHordeConfigured()) {
-    try {
-      const hordeTimeoutMs = Number(process.env.AI_HORDE_TIMEOUT_SECONDS || "90") * 1000;
-      const bytes = await generateAiHordeImage(character, prompt, 1024, 1024, hordeTimeoutMs);
-      return { bytes, provider: "aihorde" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] AI Horde failed, falling back to Cloudflare:", msg);
-      errors.push(`aihorde: ${msg}`);
-    }
   }
 
   if (isCloudflareConfigured()) {
@@ -301,20 +288,8 @@ async function generateBackgroundImage(
     return { bytes, provider: "pollinations" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[background] Pollinations failed, falling back to AI Horde:", msg);
+    console.warn("[background] Pollinations failed, falling back to Cloudflare:", msg);
     errors.push(`pollinations: ${msg}`);
-  }
-
-  if (isAiHordeConfigured()) {
-    try {
-      const hordeTimeoutMs = Number(process.env.AI_HORDE_TIMEOUT_SECONDS || "90") * 1000;
-      const bytes = await generateAiHordeImage({ isExplicit }, prompt, 1920, 1080, hordeTimeoutMs);
-      return { bytes, provider: "aihorde" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[background] AI Horde failed, falling back to Cloudflare:", msg);
-      errors.push(`aihorde: ${msg}`);
-    }
   }
 
   if (isCloudflareConfigured()) {

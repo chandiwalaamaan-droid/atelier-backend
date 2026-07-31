@@ -90,7 +90,7 @@ async function generateAvatar(character) {
   const params = new URLSearchParams({
     width: "1024",
     height: "1024",
-    model: "flux",
+    model: isExplicit ? "vendouple/uncensored-image-enhanced" : "flux",
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Math.floor(Math.random() * 1000000)),
@@ -132,7 +132,7 @@ async function generateBackground(character) {
   const params = new URLSearchParams({
     width: "1920",
     height: "1080",
-    model: "flux",
+    model: isExplicit ? "vendouple/uncensored-image-enhanced" : "flux",
     nologo: "true",
     safe: isExplicit ? "false" : "true",
     seed: String(Math.floor(Math.random() * 1000000)),
