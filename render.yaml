@@ -41,13 +41,13 @@ services:
         sync: false
       - key: B2_ENDPOINT
         sync: false
-      # Cloudflare Workers AI — third/last-resort image-gen fallback (see cloudflare.ts).
-       - key: CLOUDFLARE_ACCOUNT_ID
-         sync: false
-       - key: CLOUDFLARE_API_TOKEN
-         sync: false
-       - key: CLOUDFLARE_IMAGE_MODEL
-         value: "lykon/dreamshaper-8-lcm"
+# Cloudflare Workers AI — third/last-resort image-gen fallback (see cloudflare.ts).
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_IMAGE_MODEL
+        value: "@cf/lykon/dreamshaper-8-lcm"
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_KEY_2

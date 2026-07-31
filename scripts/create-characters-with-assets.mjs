@@ -17,6 +17,8 @@ const enriched = characters.map((char) => {
     ...char,
     avatarUrl: `/assets/characters/${slug}.png`,
     backgroundUrl: `/assets/characters/backgrounds/${slug}-bg.png`,
+    avatarPrompt: "",
+    scenePromptTemplate: "",
   };
 });
 
@@ -39,6 +41,8 @@ export interface CharacterWithAssets {
   isExplicit: boolean;
   avatarUrl: string;
   backgroundUrl: string;
+  avatarPrompt: string;
+  scenePromptTemplate: string;
 }
 
 export const darkTabooCharacters: CharacterWithAssets[] = ${JSON.stringify(enriched, null, 2)};

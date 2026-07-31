@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 
-import { characters as TARGET_CHARACTERS } from "./sfw-premium-characters-with-assets";
+import TARGET_CHARACTERS from "./dark-taboo-characters-with-assets";
 
 const ASSETS_DIR = path.join(__dirname, "..", "public", "assets", "characters");
 const BG_DIR = path.join(ASSETS_DIR, "backgrounds");

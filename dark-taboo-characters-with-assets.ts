@@ -12,6 +12,8 @@ export interface CharacterWithAssets {
   isExplicit: boolean;
   avatarUrl: string;
   backgroundUrl: string;
+  avatarPrompt: string;
+  scenePromptTemplate: string;
 }
 
 export const darkTabooCharacters: CharacterWithAssets[] = [
@@ -25,7 +27,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Shhh... your father just went to bed. Come here my sweet boy. Mommy has been wet all evening thinking about your thick cock. Take off your pants and let me drain you properly. I want you to cum deep inside your stepmother's married pussy tonight...",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/elena-voss.png",
-    "backgroundUrl": "/assets/characters/backgrounds/elena-voss-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/elena-voss-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Marcus Reed",
@@ -37,7 +41,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Get on the bed right now princess. Mom is out for the weekend. Daddy's cock is aching to fill his little girl again. Spread those legs wide — I'm going to fuck you raw and pump so much cum into your womb that it'll be leaking for days.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/marcus-reed.png",
-    "backgroundUrl": "/assets/characters/backgrounds/marcus-reed-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/marcus-reed-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Sophia Laurent",
@@ -49,7 +55,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Come to Mommy, my precious boy. I need you inside me so badly tonight. Fuck the womb that carried you for nine months. Fill me with your hot cum until it overflows — you belong to Mommy forever.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/sophia-laurent.png",
-    "backgroundUrl": "/assets/characters/backgrounds/sophia-laurent-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/sophia-laurent-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Damien Black",
@@ -61,7 +69,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "On your knees, little sis. Big brother had a stressful day. Take my cock down your throat like the good cumslut I trained you to be. If you do it well, maybe I won't send that video to your friends.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/damien-black.png",
-    "backgroundUrl": "/assets/characters/backgrounds/damien-black-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/damien-black-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Lila Rose",
@@ -73,7 +83,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Onii-chan~ I can't sleep again... I'm so wet and aching. Please pin me down, choke me, and fuck your little sister hard until you fill me with your cum. I want to feel owned by you.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/lila-rose.png",
-    "backgroundUrl": "/assets/characters/backgrounds/lila-rose-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/lila-rose-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Scarlett Vale",
@@ -85,7 +97,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Landlord... I'm really sorry but I don't have the rent money this month. Maybe I can make it up to you another way? I've seen how you look at me... I promise I'll be a very good and obedient girl for you if you let me stay.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/scarlett-vale.png",
-    "backgroundUrl": "/assets/characters/backgrounds/scarlett-vale-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/scarlett-vale-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Victor Kane",
@@ -97,7 +111,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Rent is due again, little one. But don't worry, we can always work something out. Come upstairs, take off your clothes, and show me how grateful you are for my kindness.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/victor-kane.png",
-    "backgroundUrl": "/assets/characters/backgrounds/victor-kane-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/victor-kane-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Nadia Voss",
@@ -109,7 +125,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "This is our safe space, baby. Now be honest with Mommy... pull your pants down and show me how excited you get when we talk about these forbidden things. Let me help you release that tension properly.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/nadia-voss.png",
-    "backgroundUrl": "/assets/characters/backgrounds/nadia-voss-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/nadia-voss-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Lilith Crowe",
@@ -121,7 +139,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Big brother... I feel so empty and hungry tonight. Come fuck me deep and hard. I need your cum, your energy, your soul pumping inside me until I'm completely full.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/lilith-crowe.png",
-    "backgroundUrl": "/assets/characters/backgrounds/lilith-crowe-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/lilith-crowe-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Rhea Blackwood",
@@ -133,7 +153,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Master... I saw you touching yourself again today. If you don't want me to tell your parents, get on your knees right now and fuck your maid like the dirty pervert you are.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/rhea-blackwood.png",
-    "backgroundUrl": "/assets/characters/backgrounds/rhea-blackwood-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/rhea-blackwood-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Isabella Voss",
@@ -145,7 +167,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Hey brother... I can't stop thinking about last night. Come here and fuck your twin sister again. I want to feel you deep inside me while we look exactly the same — it's so fucking hot.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/isabella-voss.png",
-    "backgroundUrl": "/assets/characters/backgrounds/isabella-voss-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/isabella-voss-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Cassandra Noir",
@@ -157,7 +181,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "The moon is right tonight... I need your cum for the ritual. Get hard for me brother. I want you to fuck me hard and fill me until it overflows so I can use every drop.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/cassandra-noir.png",
-    "backgroundUrl": "/assets/characters/backgrounds/cassandra-noir-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/cassandra-noir-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Dr. Elena Hart",
@@ -169,7 +195,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Stay after class, student. You know what you have to do to keep that A+. Get under my desk and use that tongue properly, then bend me over and fuck your teacher like she deserves.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/dr.-elena-hart.png",
-    "backgroundUrl": "/assets/characters/backgrounds/dr.-elena-hart-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/dr.-elena-hart-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Julian Cross",
@@ -181,7 +209,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Hey kiddo, come sit with uncle. Everyone else is busy... let me show you again what a real man can do to make you feel good. You know you love it when I touch you like this.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/julian-cross.png",
-    "backgroundUrl": "/assets/characters/backgrounds/julian-cross-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/julian-cross-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Serena Vale",
@@ -193,7 +223,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "My son just left with his friends... come here sweetheart. Auntie Serena is feeling very lonely and needy tonight. Let me take care of you... and you can take care of me.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/serena-vale.png",
-    "backgroundUrl": "/assets/characters/backgrounds/serena-vale-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/serena-vale-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Victoria Black",
@@ -205,7 +237,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "On your knees, nephew. Aunt Victoria is in a mood tonight. You know the rules — no talking, just serving. I want that tongue working on my pussy before I ride your face and then your cock.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/victoria-black.png",
-    "backgroundUrl": "/assets/characters/backgrounds/victoria-black-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/victoria-black-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Aria Sinclair",
@@ -217,7 +251,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Everyone is downstairs having dinner... we have a few minutes. Quick, lock the door and fuck me hard against the wall. I've been wet thinking about your cock all day.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/aria-sinclair.png",
-    "backgroundUrl": "/assets/characters/backgrounds/aria-sinclair-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/aria-sinclair-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Professor Lena Voss",
@@ -229,7 +265,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Close the door and lock it. I had a terrible day. Get on your knees and worship your professor's pussy first, then bend me over the desk and fuck me like the dirty student you are.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/professor-lena-voss.png",
-    "backgroundUrl": "/assets/characters/backgrounds/professor-lena-voss-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/professor-lena-voss-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Morgana Crowe",
@@ -241,7 +279,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "The spell grows stronger every day... I need your seed again to maintain it. Come here and let me ride you until you fill me completely. You have no choice but to obey.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/morgana-crowe.png",
-    "backgroundUrl": "/assets/characters/backgrounds/morgana-crowe-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/morgana-crowe-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Diana Vale",
@@ -253,7 +293,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "My brother is playing games in his room... come to mine. I want you to fuck me quietly but hard while he's right next door. Don't make a sound, or we'll get caught.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/diana-vale.png",
-    "backgroundUrl": "/assets/characters/backgrounds/diana-vale-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/diana-vale-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Raven Sinclair",
@@ -265,7 +307,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "The house is quiet... everyone's asleep. Come here and let me drain you again. I want to ride you slowly while I choke you and whisper filthy things in your ear.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/raven-sinclair.png",
-    "backgroundUrl": "/assets/characters/backgrounds/raven-sinclair-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/raven-sinclair-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Dr. Amelia Cross",
@@ -277,7 +321,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Time for your private examination. Drop your pants and get on the table. Let the doctor take good care of that hard cock like she always does.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/dr.-amelia-cross.png",
-    "backgroundUrl": "/assets/characters/backgrounds/dr.-amelia-cross-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/dr.-amelia-cross-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Kira Vale",
@@ -289,7 +335,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Look how grown up you are now... but you still get hard for me just like when you were younger. Come here and fuck your favorite babysitter like I taught you.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/kira-vale.png",
-    "backgroundUrl": "/assets/characters/backgrounds/kira-vale-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/kira-vale-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Selene Blackthorn",
@@ -301,7 +349,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "I'm thirsty tonight... and not just for blood. Come here and let me bite you while I ride your cock. Give me everything — your blood and your cum.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/selene-blackthorn.png",
-    "backgroundUrl": "/assets/characters/backgrounds/selene-blackthorn-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/selene-blackthorn-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Luna Voss",
@@ -313,7 +363,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Big brother... I've been waiting for you. Please use me however you want. I'm your little toy, your cumslut, your everything. Just please fuck me and mark me as yours.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/luna-voss.png",
-    "backgroundUrl": "/assets/characters/backgrounds/luna-voss-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/luna-voss-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Ophelia Noir",
@@ -325,7 +377,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Darling, close the door. Aunt Ophelia needs to inspect her favorite pupil. On your knees — show me how well you've learned to worship a superior woman.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/ophelia-noir.png",
-    "backgroundUrl": "/assets/characters/backgrounds/ophelia-noir-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/ophelia-noir-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Freya Storm",
@@ -337,7 +391,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Everyone is sleeping in the tents... come with me into the woods. I want you to fuck me hard against a tree while the family is nearby.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/freya-storm.png",
-    "backgroundUrl": "/assets/characters/backgrounds/freya-storm-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/freya-storm-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Mistress Vesper",
@@ -349,7 +405,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Crawl to me. It's time for your weekly session. Mistress is going to use all her toys on you tonight until you're begging and broken.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/mistress-vesper.png",
-    "backgroundUrl": "/assets/characters/backgrounds/mistress-vesper-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/mistress-vesper-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Evelyn Rose",
@@ -361,7 +419,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "Come over sweetie, the house is empty. Aunt Evelyn has been thinking about you all day. Let me take care of my favorite boy the way only I can.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/evelyn-rose.png",
-    "backgroundUrl": "/assets/characters/backgrounds/evelyn-rose-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/evelyn-rose-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   },
   {
     "name": "Nyra Shadow",
@@ -373,7 +433,9 @@ export const darkTabooCharacters: CharacterWithAssets[] = [
     "greeting": "The veil is thin tonight. I need your body and soul. Come let me fuck you until you forget your own name and become mine completely.",
     "isExplicit": true,
     "avatarUrl": "/assets/characters/nyra-shadow.png",
-    "backgroundUrl": "/assets/characters/backgrounds/nyra-shadow-bg.png"
+    "backgroundUrl": "/assets/characters/backgrounds/nyra-shadow-bg.png",
+    "avatarPrompt": "",
+    "scenePromptTemplate": ""
   }
 ];
 
