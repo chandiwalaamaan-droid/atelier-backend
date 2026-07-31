@@ -513,6 +513,7 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   const aspect = typeof body.aspect === "string" && ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(body.aspect)
     ? body.aspect
     : "1:1";
+  const regenerate = Boolean(body.regenerate);
 
   // Rate limit to prevent abuse
   const limit = checkRateLimit(`image:${userId}`, 10, 60);
@@ -537,13 +538,11 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   // to depict, rather than replacing the identity anchor outright.
   const scenePrompt = buildSceneImagePrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
-  const avatarRef = character.avatarUrl && /^https?:\/\//i.test(character.avatarUrl)
-    ? character.avatarUrl
-    : undefined;
 
-  // Check cache first for near-instant repeat generation
-  const key = cacheKey(scenePrompt, w, h, avatarRef);
-  const cached = await getCachedImage(key);
+  // Check cache first for near-instant repeat generation, unless the client
+  // explicitly asked for a fresh generation.
+  const key = cacheKey(scenePrompt, w, h);
+  const cached = regenerate ? null : await getCachedImage(key);
   if (cached) {
     const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
     const publicId = `${req.params.id}-${Date.now()}-scene`;
@@ -555,7 +554,7 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   let result: { bytes: Buffer; provider: string };
   try {
     const sceneStyle = detectStyle(scenePrompt);
-    result = await generateSceneImage(scenePrompt, w, h, character.isExplicit, timeoutMs, avatarRef, 0.4, sceneStyle);
+    result = await generateSceneImage(scenePrompt, w, h, character.isExplicit, timeoutMs, undefined, 0, sceneStyle);
   } catch (err) {
     console.error("Scene image generation failed", err);
     return res.status(502).json({ error: "Image generation failed. Try again with a different prompt." });
@@ -584,13 +583,15 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildImagePrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
+  const regenerate = Boolean(body.regenerate);
 
-  // Check cache first for near-instant repeat generation
+  // Check cache first for near-instant repeat generation, unless the client
+  // explicitly asked for a fresh generation.
   const sizesEnv = (process.env.AVATAR_SIZES || "1024x1024").split(",").map((s) => s.trim());
   const primarySize = sizesEnv[0] || "1024x1024";
   const [cacheW, cacheH] = primarySize.split("x").map(Number);
   const key = cacheKey(prompt, cacheW || 1024, cacheH || 1024);
-  const cached = await getCachedImage(key);
+  const cached = regenerate ? null : await getCachedImage(key);
   if (cached) {
     const cleanBytes = await sharp(cached).sharpen().toBuffer().catch(() => cached);
     const publicId = `${req.params.id}-${Date.now()}-generated`;
@@ -712,11 +713,8 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   // Use scene image generation with landscape dimensions for backgrounds
   let result: { bytes: Buffer; provider: string };
   try {
-    const avatarRef = character.avatarUrl && /^https?:\/\//i.test(character.avatarUrl)
-      ? character.avatarUrl
-      : undefined;
     const bgStyle = detectStyle(prompt);
-    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs, avatarRef, 0.35, bgStyle);
+    result = await generateSceneImage(prompt, 1920, 1080, character.isExplicit, timeoutMs, undefined, 0, bgStyle);
   } catch (err) {
     console.error("Background image generation failed", err);
     return res.status(502).json({ error: "Background image generation failed. Try again with a different prompt." });
