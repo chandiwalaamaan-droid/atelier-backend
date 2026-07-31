@@ -264,10 +264,10 @@ router.post("/import", asyncHandler(async (req, res) => {
 
 // GET /api/characters/discover — public gallery of characters shared by any
 // user. By default only non-explicit ("SFW") characters are returned; pass
-// ?nsfw=1 to also include explicit ones. This is the server-side half of the
-// homepage's NSFW toggle — the client sends ?nsfw=1 only once the person has
-// switched it on, so explicit content never reaches a browser that hasn't
-// asked for it.
+// ?nsfw=1 to instead return only explicit ones. The two modes are mutually
+// exclusive so SFW content never appears in 18+ mode and vice versa. The
+// client sends ?nsfw=1 only once the person has switched the toggle on, so
+// explicit content never reaches a browser that hasn't asked for it.
 // NOTE: this must be registered before GET "/:id" below, or Express will
 // treat "discover" as an :id and this route will never be reached.
 router.get("/discover", asyncHandler(async (req, res) => {
@@ -280,7 +280,7 @@ router.get("/discover", asyncHandler(async (req, res) => {
     where: {
       isPublic: true,
       isHidden: false,
-      ...(includeExplicit ? {} : { isExplicit: false }),
+      ...(includeExplicit ? { isExplicit: true } : { isExplicit: false }),
     },
     orderBy: { createdAt: "desc" },
     take: 60,
