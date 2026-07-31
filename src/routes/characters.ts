@@ -26,7 +26,16 @@ type CharacterInput = {
   isExplicit: boolean;
   isPublic: boolean;
   roleplayNotes: string;
+  avatarPrompt: string;
+  scenePromptTemplate: string;
 };
+
+const MAX_PROMPT_FIELD_LENGTH = 2000;
+
+function cleanPrompt(value: unknown, fallback = "") {
+  if (typeof value !== "string") return fallback;
+  return value.trim().slice(0, MAX_PROMPT_FIELD_LENGTH);
+}
 
 function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: string } {
   if (typeof body !== "object" || body === null) {
@@ -45,6 +54,14 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
   const isExplicit = raw.isExplicit === true;
   const isPublic = raw.isPublic === true;
   const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
+  // Exact creator-specified appearance description — used verbatim as the
+  // primary image-gen prompt (avatar/background) and as the visual identity
+  // anchor for in-chat scene generation. Optional: falls back to personality/
+  // tagline-derived prompts in avatar.ts when not provided.
+  const avatarPrompt = cleanPrompt(raw.avatarPrompt);
+  // Optional art-style / setting DNA reused across every in-chat scene image
+  // for this character so scenes stay visually consistent with each other.
+  const scenePromptTemplate = cleanPrompt(raw.scenePromptTemplate);
 
   if (!name || !personality || !backstory || !greeting) {
     return { error: "Name, personality, backstory, and greeting are all required." };
@@ -62,6 +79,8 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
       isExplicit,
       isPublic,
       roleplayNotes,
+      avatarPrompt,
+      scenePromptTemplate,
     },
   };
 }
@@ -302,6 +321,8 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const roleplayNotes = isExplicit
     ? clean(body.roleplayNotes, existing.roleplayNotes ?? "")
     : "";
+  const avatarPrompt = cleanPrompt(body.avatarPrompt, existing.avatarPrompt ?? "");
+  const scenePromptTemplate = cleanPrompt(body.scenePromptTemplate, existing.scenePromptTemplate ?? "");
 
   if (!name || !personality || !backstory || !greeting) {
     return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
@@ -314,7 +335,20 @@ router.put("/:id", asyncHandler(async (req, res) => {
 
   const character = await prisma.character.update({
     where: { id: req.params.id },
-    data: { name, tagline, personality, backstory, greeting, avatarEmoji, accentColor, isExplicit, isPublic, roleplayNotes },
+    data: {
+      name,
+      tagline,
+      personality,
+      backstory,
+      greeting,
+      avatarEmoji,
+      accentColor,
+      isExplicit,
+      isPublic,
+      roleplayNotes,
+      avatarPrompt,
+      scenePromptTemplate,
+    },
   });
 
   return res.json({ character });
@@ -356,6 +390,8 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
       backgroundUrl: source.backgroundUrl,
       accentColor: source.accentColor,
       isExplicit: source.isExplicit,
+      avatarPrompt: source.avatarPrompt,
+      scenePromptTemplate: source.scenePromptTemplate,
       isPublic: false, // the remix starts private; the user can choose to share their own copy later
     },
   });

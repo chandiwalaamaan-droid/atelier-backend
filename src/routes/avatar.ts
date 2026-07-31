@@ -77,14 +77,42 @@ router.post("/:id/avatar", upload.single("avatar"), asyncHandler(async (req, res
   return res.json({ character: updated });
 }));
 
-// Portrait prompt tuned for character avatars. Explicit characters skip the
-// family-friendly guardrails; optional customPrompt overrides the default.
+// Portrait prompt tuned for character avatars. Priority order for what
+// actually describes what the character LOOKS like:
+//   1. customPrompt   — a one-off override typed by the user for this
+//                        specific generation request. Highest priority:
+//                        exactly what was asked for, right now.
+//   2. avatarPrompt   — the creator's exact, saved visual description for
+//                        this character (set at creation/import time).
+//                        This is the character's true "appearance" field —
+//                        personality/tagline are behavior, not looks, and
+//                        should never stand in for this when it exists.
+//   3. Fallback       — reconstructed from tagline/personality when neither
+//                        of the above is available (legacy characters).
+// In every case we append a short technical/quality suffix — even exact
+// user text benefits from render-quality guidance, and omitting it produces
+// noticeably worse output for no benefit to prompt fidelity.
+const AVATAR_QUALITY_SUFFIX =
+  "Cinematic lighting, ultra-detailed rendering, crisp focus, professional digital portrait quality, no text, no watermark.";
+
 function buildImagePrompt(
-  character: { name: string; personality: string; tagline: string; isExplicit?: boolean },
+  character: {
+    name: string;
+    personality: string;
+    tagline: string;
+    isExplicit?: boolean;
+    avatarPrompt?: string | null;
+  },
   customPrompt?: string
 ) {
   if (customPrompt?.trim()) {
-    return customPrompt.trim().slice(0, 4000);
+    return `${customPrompt.trim()} ${AVATAR_QUALITY_SUFFIX}`.slice(0, 4000);
+  }
+
+  if (character.avatarPrompt?.trim()) {
+    // Exact creator-specified appearance, used verbatim as the core subject
+    // description. This is the "as per the user demand" path.
+    return `${character.avatarPrompt.trim()} ${AVATAR_QUALITY_SUFFIX}`.slice(0, 4000);
   }
 
   const base =
@@ -247,21 +275,54 @@ async function generateAvatarImage(
   throw new Error("All image providers failed: " + errors.join("; "));
 }
 
-// Scene prompt for in-chat image generation (more cinematic, less portrait-focused)
-function buildSceneImagePrompt(character: { name: string; personality: string; tagline: string; isExplicit?: boolean }) {
+// Scene prompt for in-chat image generation (more cinematic, less portrait-
+// focused). Three ingredients, in order:
+//   1. Identity anchor (avatarPrompt) — keeps the character looking like
+//      themselves from one generated scene to the next, instead of drifting
+//      to a different face/body every time.
+//   2. Style DNA (scenePromptTemplate) — creator-set art style / setting
+//      consistency notes reused across every scene for this character.
+//   3. Exact current scenario (context) — what's actually happening right
+//      now in the conversation, so the image matches this moment rather
+//      than a generic pose.
+function buildSceneImagePrompt(
+  character: {
+    name: string;
+    personality: string;
+    tagline: string;
+    isExplicit?: boolean;
+    avatarPrompt?: string | null;
+    scenePromptTemplate?: string | null;
+  },
+  context?: string
+) {
+  const identityAnchor = character.avatarPrompt?.trim()
+    ? `${character.name}, who looks exactly like this: ${character.avatarPrompt.trim()}. `
+    : `${character.name}. Traits: ${character.personality}. `;
+
+  const styleAnchor = character.scenePromptTemplate?.trim()
+    ? `Consistent art style and setting for every scene with this character: ${character.scenePromptTemplate.trim()}. `
+    : "";
+
+  const scenario = context?.trim()
+    ? `Exact current scene / moment to depict: ${context.trim().slice(0, 2500)}. `
+    : `Tagline: ${character.tagline || "n/a"}. `;
+
   const base =
-    `Cinematic scene featuring ${character.name}. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
-    `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k.`;
+    `Cinematic scene featuring ${identityAnchor}${styleAnchor}${scenario}` +
+    `Dramatic lighting, rich atmosphere, highly detailed, photorealistic or stylized, 8k, professional photography, ` +
+    `sharp focus, cinematic composition, film grain, volumetric lighting, intricate details, masterpiece. ` +
+    `Depict the character exactly as described above and keep the scene consistent with the exact moment given — ` +
+    `do not invent a different pose or setting than what's described.`;
 
   if (character.isExplicit) {
     return (
       `${base} Mature adult scene, sensual atmosphere, intimate moment, tasteful but uninhibited. ` +
-      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks.`
+      `Focus on emotion, chemistry, and physical connection. High quality, polished, no watermarks, no text.`
     );
   }
 
-  return `${base} Emotional, engaging scene with strong composition.`;
+  return `${base} Emotional, engaging scene with strong composition, vivid colors, immersive environment.`;
 }
 
 // Generate a scene image (not necessarily portrait/avatar) with given dimensions
@@ -393,7 +454,12 @@ router.post("/:id/image/generate", asyncHandler(async (req, res) => {
   };
   const { w, h } = aspectMap[aspect] || { w: 1024, h: 1024 };
 
-  const scenePrompt = customPrompt || buildSceneImagePrompt(character);
+  // Always anchor to the character's identity + style (avatarPrompt /
+  // scenePromptTemplate) so every scene image still looks like the same
+  // character in the same visual style. customPrompt — built client-side
+  // from the live conversation — is passed through as the exact scenario
+  // to depict, rather than replacing the identity anchor outright.
+  const scenePrompt = buildSceneImagePrompt(character, customPrompt);
   const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
 
   // Check cache first for near-instant repeat generation
@@ -489,13 +555,30 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------------
 
 // Background prompt tuned for chat interface wallpapers — atmospheric, wide,
-// non-distracting scenes that look good behind text bubbles.
+// non-distracting scenes that look good behind text bubbles. Reuses the
+// character's avatarPrompt (their actual visual/style identity) so the
+// background's mood and palette stay consistent with how the character
+// looks, rather than being derived from unrelated personality traits.
 function buildBackgroundPrompt(
-  character: { name: string; personality: string; tagline: string; isExplicit?: boolean }
+  character: {
+    name: string;
+    personality: string;
+    tagline: string;
+    backstory?: string;
+    isExplicit?: boolean;
+    avatarPrompt?: string | null;
+  }
 ) {
+  const styleAnchor = character.avatarPrompt?.trim()
+    ? `Visual style/identity reference (do not depict the character themselves, just match the palette, era, and aesthetic): ${character.avatarPrompt.trim()}. `
+    : "";
+  const settingHint = character.backstory?.trim()
+    ? `Setting/world details to draw from: ${character.backstory.trim().slice(0, 500)}. `
+    : "";
+
   const base =
     `A stunning atmospheric background scene for a character named ${character.name}. ` +
-    `Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}. ` +
+    `Tagline: ${character.tagline || "n/a"}. ${styleAnchor}${settingHint}` +
     `Wide landscape, soft focus, dreamy lighting, rich colors, highly detailed, cinematic atmosphere. ` +
     `The scene should evoke the character's world and mood without any text, watermarks, or people in the foreground.`;
 

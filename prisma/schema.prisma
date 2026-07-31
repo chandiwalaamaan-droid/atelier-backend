@@ -95,6 +95,8 @@ model Character {
   personality        String // short trait list, shown to the user
   backstory          String // longer context, injected into the model prompt
   greeting           String // first message the character opens with
+  avatarPrompt       String    @default("") // exact creator-specified visual/appearance description, used verbatim as the primary image-gen prompt for avatar + background + as the identity anchor for in-chat scene images
+  scenePromptTemplate String   @default("") // creator-specified art style / setting DNA reused across every in-chat scene image for visual consistency
   memorySummary      String    @default("") // running summary of older conversation, folded in as memory
   summarizedThrough  Int       @default(0) // how many messages are already folded into memorySummary
   isExplicit         Boolean   @default(false) // whether this is an explicit/NSFW character

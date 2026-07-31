@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { characters as sfwCharacters } from "../sfw-premium-characters-with-assets";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -16,17 +17,33 @@ interface SeedCharacter {
   backstory: string;
   greeting: string;
   isExplicit: boolean;
+  avatarUrl?: string;
+  backgroundUrl?: string;
 }
 
 async function main() {
-  // Load the characters JSON
   const raw = fs.readFileSync(CHARACTERS_JSON_PATH, "utf-8");
-  const characters: SeedCharacter[] = JSON.parse(raw);
+  const jsonCharacters: SeedCharacter[] = JSON.parse(raw);
 
-  console.log(`Loaded ${characters.length} characters from JSON`);
+  const sfwSeedCharacters: SeedCharacter[] = sfwCharacters.map((c) => ({
+    name: c.name,
+    tagline: c.tagline,
+    avatarEmoji: c.avatarEmoji,
+    accentColor: c.accentColor,
+    personality: c.personality,
+    backstory: c.backstory,
+    greeting: c.greeting,
+    isExplicit: c.isExplicit,
+    avatarUrl: c.avatarUrl,
+    backgroundUrl: c.backgroundUrl,
+  }));
 
-  // Find or create a seed admin user to own these characters
-  // This user is for demo/seed purposes
+  const allCharacters: SeedCharacter[] = [...jsonCharacters, ...sfwSeedCharacters];
+
+  console.log(
+    `Loaded ${allCharacters.length} characters total (${jsonCharacters.length} explicit + ${sfwSeedCharacters.length} premium)`
+  );
+
   let seedUser = await prisma.user.findUnique({
     where: { email: "seed@atelier.local" },
   });
@@ -45,13 +62,12 @@ async function main() {
     console.log(`Created seed user: ${seedUser.id}`);
   }
 
-  // Count existing seed characters
   const existingCount = await prisma.character.count({
     where: { ownerId: seedUser.id },
   });
   console.log(`Existing characters for seed user: ${existingCount}`);
 
-  if (existingCount >= characters.length) {
+  if (existingCount >= allCharacters.length) {
     console.log("Characters already seeded. Making sure they're all public...");
     await prisma.character.updateMany({
       where: { ownerId: seedUser.id },
@@ -61,13 +77,11 @@ async function main() {
     return;
   }
 
-  // Delete any existing seed characters and re-insert
   await prisma.character.deleteMany({
     where: { ownerId: seedUser.id },
   });
 
-  // Insert all characters
-  for (const char of characters) {
+  for (const char of allCharacters) {
     await prisma.character.create({
       data: {
         ownerId: seedUser.id,
@@ -79,12 +93,14 @@ async function main() {
         backstory: char.backstory,
         greeting: char.greeting,
         isExplicit: char.isExplicit,
-        isPublic: true, // shown on Discover; explicit ones only surface when the NSFW toggle is on
+        avatarUrl: char.avatarUrl ?? null,
+        backgroundUrl: char.backgroundUrl ?? null,
+        isPublic: true,
       },
     });
   }
 
-  console.log(`Seeded ${characters.length} characters successfully!`);
+  console.log(`Seeded ${allCharacters.length} characters successfully!`);
 }
 
 main()
