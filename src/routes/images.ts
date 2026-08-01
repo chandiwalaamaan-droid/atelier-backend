@@ -34,14 +34,22 @@ router.get(
       return res.status(404).json({ error: "Image not found." });
     }
 
-    res.set("Content-Type", object.ContentType || "image/png");
-    // Keys are unique per upload (timestamp/uuid baked in), so it's always
-    // safe to cache aggressively — a given key's bytes never change.
-    res.set("Cache-Control", "public, max-age=31536000, immutable");
+    const contentLength = object.ContentLength ?? undefined;
+    res.set({
+      "Content-Type": object.ContentType || "image/png",
+      ...(contentLength ? { "Content-Length": String(contentLength) } : {}),
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
 
-    // object.Body is a Node Readable in the Node runtime — stream it
-    // straight through instead of buffering the whole file in memory.
-    (object.Body as NodeJS.ReadableStream).pipe(res);
+    const bodyStream = object.Body as NodeJS.ReadableStream;
+    bodyStream.on("error", (err: Error) => {
+      console.error("[images] stream error:", err);
+      if (!res.headersSent) {
+        res.status(502).json({ error: "Failed to stream image." });
+      }
+    });
+
+    bodyStream.pipe(res);
   })
 );
 

@@ -117,22 +117,19 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     if (!target) {
       return res.status(404).json({ error: "That message couldn't be found." });
     }
-    // Messages already folded into memorySummary are gone from the working
-    // context, so editing one would silently do nothing useful — reject
-    // rather than pretend it worked.
     const positionAmongAll = await prisma.message.count({
       where: { characterId, userId, createdAt: { lte: target.createdAt } },
     });
     if (positionAmongAll <= character.summarizedThrough) {
       return res.status(400).json({ error: "That message is too old to edit." });
     }
-    // Standard "edit and resend" behavior: this message and everything
-    // after it (its old reply, and any later turns) is discarded, then a
-    // fresh reply is generated from the edited text.
-    await prisma.message.deleteMany({
-      where: { characterId, userId, createdAt: { gt: target.createdAt } },
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "Message" WHERE id = ${target.id} FOR UPDATE`;
+      await tx.message.deleteMany({
+        where: { characterId, userId, createdAt: { gt: target.createdAt } },
+      });
+      await tx.message.update({ where: { id: target.id }, data: { content: editContent } });
     });
-    await prisma.message.update({ where: { id: target.id }, data: { content: editContent } });
   } else if (isRegenerate) {
     // "regenerate" covers two cases: redoing an existing reply (last message
     // is the assistant's — mark it for replacement), or retrying a turn

@@ -6,8 +6,15 @@ import { getCurrentUserId } from "../lib/auth";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/b2";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
+import { createImageGenWorker, enqueueImageGen, ImageGenJobReturn, ImageGenJobResult, ImageGenJobData } from "../lib/imageQueue";
+import { ProviderBreaker, isRateLimitError, isTimeoutError } from "../lib/providers/circuitBreaker";
+import { Job } from "bullmq";
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/png": "png",
@@ -25,16 +32,33 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 
 const POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt";
 
+const pollinationsBreaker = new ProviderBreaker("Pollinations", { cooldownSeconds: 30, timeoutTripThreshold: 2, timeoutCooldownSeconds: 15 }, "POLLINATIONS");
+
 async function withPollinationsRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      if (pollinationsBreaker.isOpen()) {
+        throw new Error("Pollinations circuit breaker open, retry later");
+      }
       return await fn();
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
+      const isRateLimit = isRateLimitError(err);
+      const isTimeout = isTimeoutError(err);
+      if ((isRateLimit || isTimeout) && pollinationsBreaker.isOpen()) {
+        throw err;
+      }
       const isQueueFull = /429|Too Many Requests|Queue full/i.test(msg);
-      if (!isQueueFull || attempt === maxAttempts) throw err;
+      if (!isQueueFull || attempt === maxAttempts) {
+        if (isRateLimit) {
+          pollinationsBreaker.trip(err);
+        } else if (isTimeout) {
+          pollinationsBreaker.recordTimeout();
+        }
+        throw err;
+      }
       const backoffMs = 500 * attempt;
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
@@ -133,7 +157,7 @@ async function generatePollinationsBackground(
 }
 
 // ---------------------------------------------------------------------------
-// Avatar generation
+// Prompt builders
 // ---------------------------------------------------------------------------
 
 function buildAvatarPrompt(
@@ -157,37 +181,89 @@ function buildAvatarPrompt(
   return `A highly polished digital portrait of a fictional character named ${character.name}. Tagline: ${character.tagline || "n/a"}. Traits: ${character.personality}.`;
 }
 
-async function generateAvatarImage(
-  character: { isExplicit?: boolean },
-  prompt: string,
-  timeoutMs: number
-): Promise<{ bytes: Buffer; provider: string }> {
-  const errors: string[] = [];
+function buildBackgroundPrompt(
+  character: {
+    name: string;
+    tagline: string;
+    backstory?: string;
+    isExplicit?: boolean;
+  },
+  customPrompt?: string
+): string {
+  if (customPrompt?.trim()) {
+    return customPrompt.trim();
+  }
+
+  const parts = [
+    `A background scene for ${character.name}.`,
+    character.tagline ? `Tagline: ${character.tagline}.` : null,
+    character.backstory?.trim() ? `Setting: ${character.backstory.trim().slice(0, 500)}.` : null,
+  ].filter(Boolean);
+
+  return parts.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// BullMQ processor — runs in worker(s)
+// ---------------------------------------------------------------------------
+
+async function processImageJob(job: Job): Promise<ImageGenJobResult> {
+  const { prompt, isExplicit, kind } = job.data as ImageGenJobData;
+  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
+  const cloudflareAvailable = isCloudflareConfigured();
+
+  const pollinationsFn = kind === "avatar"
+    ? () => withPollinationsRetry(() => generatePollinationsAvatar({ isExplicit }, prompt, timeoutMs))
+    : () => withPollinationsRetry(() => generatePollinationsBackground(isExplicit, prompt, timeoutMs));
+
+  const cloudflareFn = () => generateCloudflareImage(prompt, timeoutMs);
+
+  const pollinationsPromise = pollinationsFn()
+    .then((result) => ({ result, provider: "pollinations" } as const))
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Promise.reject(new Error(`pollinations: ${msg}`));
+    });
+
+  const cloudflarePromise = cloudflareAvailable
+    ? cloudflareFn()
+        .then((result) => ({ result, provider: "cloudflare" } as const))
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          return Promise.reject(new Error(`cloudflare: ${msg}`));
+        })
+    : Promise.reject(new Error("cloudflare: not configured"));
 
   try {
-    const bytes = await withPollinationsRetry(() =>
-      generatePollinationsAvatar(character, prompt, timeoutMs)
-    );
-    return { bytes, provider: "pollinations" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[avatar] Pollinations failed, falling back to Cloudflare:", msg);
-    errors.push(`pollinations: ${msg}`);
-  }
-
-  if (isCloudflareConfigured()) {
+    const winner = await Promise.race([pollinationsPromise, cloudflarePromise]);
+    return { bytes: winner.result, provider: winner.provider };
+  } catch (pollinationsErr) {
     try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs);
-      return { bytes, provider: "cloudflare" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[avatar] Cloudflare Workers AI failed:", msg);
-      errors.push(`cloudflare: ${msg}`);
+      const winner = await cloudflarePromise;
+      return { bytes: winner.result, provider: winner.provider };
+    } catch (cloudflareErr) {
+      const pMsg = pollinationsErr instanceof Error ? pollinationsErr.message : String(pollinationsErr);
+      const cMsg = cloudflareErr instanceof Error ? cloudflareErr.message : String(cloudflareErr);
+      throw new Error(`All providers failed: ${pMsg}; ${cMsg}`);
     }
   }
-
-  throw new Error("All avatar providers failed: " + errors.join("; "));
 }
+
+export function startImageGenWorker(): void {
+  const processor = async (job: Job): Promise<ImageGenJobResult> => {
+    try {
+      return await processImageJob(job);
+    } catch (err) {
+      console.error(`[image-queue] Job ${job.id} failed:`, err);
+      throw err;
+    }
+  };
+  createImageGenWorker(processor);
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 
 // POST /api/characters/:id/avatar — upload an image file
 router.post("/:id/avatar", upload.single("avatar"), asyncHandler(async (req, res) => {
@@ -228,83 +304,25 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const body = req.body ?? {};
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildAvatarPrompt(character, customPrompt);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
 
-  let result: { bytes: Buffer; provider: string };
   try {
-    result = await generateAvatarImage(character, prompt, timeoutMs);
+    const { jobId, promise } = await enqueueImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "avatar" });
+    const result = await promise;
+    const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
+    const publicId = `${req.params.id}-${Date.now()}-generated`;
+    const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+    const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
+    console.log(`[avatar] generated via ${result.provider}`);
+    return res.json({ character: updated });
   } catch (err) {
     console.error("Avatar generation failed", err);
     return res.status(502).json({ error: "Avatar generation failed. Try again, or upload an image instead." });
   }
-
-  const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
-
-  const publicId = `${req.params.id}-${Date.now()}-generated`;
-  const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
-  const updated = await prisma.character.update({ where: { id: req.params.id }, data: { avatarUrl } });
-
-  console.log(`[avatar] generated via ${result.provider}`);
-  return res.json({ character: updated });
 }));
 
 // ---------------------------------------------------------------------------
 // Background generation
 // ---------------------------------------------------------------------------
-
-function buildBackgroundPrompt(
-  character: {
-    name: string;
-    tagline: string;
-    backstory?: string;
-    isExplicit?: boolean;
-  },
-  customPrompt?: string
-): string {
-  if (customPrompt?.trim()) {
-    return customPrompt.trim();
-  }
-
-  const parts = [
-    `A background scene for ${character.name}.`,
-    character.tagline ? `Tagline: ${character.tagline}.` : null,
-    character.backstory?.trim() ? `Setting: ${character.backstory.trim().slice(0, 500)}.` : null,
-  ].filter(Boolean);
-
-  return parts.join(" ");
-}
-
-async function generateBackgroundImage(
-  isExplicit: boolean,
-  prompt: string,
-  timeoutMs: number
-): Promise<{ bytes: Buffer; provider: string }> {
-  const errors: string[] = [];
-
-  try {
-    const bytes = await withPollinationsRetry(() =>
-      generatePollinationsBackground(isExplicit, prompt, timeoutMs)
-    );
-    return { bytes, provider: "pollinations" };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[background] Pollinations failed, falling back to Cloudflare:", msg);
-    errors.push(`pollinations: ${msg}`);
-  }
-
-  if (isCloudflareConfigured()) {
-    try {
-      const bytes = await generateCloudflareImage(prompt, timeoutMs);
-      return { bytes, provider: "cloudflare" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[background] Cloudflare Workers AI failed:", msg);
-      errors.push(`cloudflare: ${msg}`);
-    }
-  }
-
-  throw new Error("All background providers failed: " + errors.join("; "));
-}
 
 // POST /api/characters/:id/background/generate — AI-generate a chat background/wallpaper image
 router.post("/:id/background/generate", asyncHandler(async (req, res) => {
@@ -319,31 +337,26 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const body = req.body ?? {};
   const customPrompt = typeof body.prompt === "string" ? body.prompt : undefined;
   const prompt = buildBackgroundPrompt(character, customPrompt);
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
 
-  let result: { bytes: Buffer; provider: string };
   try {
-    result = await generateBackgroundImage(character.isExplicit, prompt, timeoutMs);
+    const { jobId, promise } = await enqueueImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "background" });
+    const result = await promise;
+    let cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
+    if (cleanBytes.length) {
+      cleanBytes = await sharp(cleanBytes)
+        .resize(1920, 1080, { fit: "cover" })
+        .toBuffer()
+        .catch(() => cleanBytes);
+    }
+    const publicId = `${req.params.id}-${Date.now()}-bg`;
+    const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
+    const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
+    console.log(`[background] generated via ${result.provider}`);
+    return res.json({ character: updated });
   } catch (err) {
     console.error("Background generation failed", err);
     return res.status(502).json({ error: "Background generation failed. Try again with a different prompt." });
   }
-
-  let cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
-
-  if (cleanBytes.length) {
-    cleanBytes = await sharp(cleanBytes)
-      .resize(1920, 1080, { fit: "cover" })
-      .toBuffer()
-      .catch(() => cleanBytes);
-  }
-
-  const publicId = `${req.params.id}-${Date.now()}-bg`;
-  const backgroundUrl = await uploadAvatarBuffer(cleanBytes, publicId);
-  const updated = await prisma.character.update({ where: { id: req.params.id }, data: { backgroundUrl } });
-
-  console.log(`[background] generated via ${result.provider}`);
-  return res.json({ character: updated });
 }));
 
 // POST /api/characters/:id/background — upload a custom background image

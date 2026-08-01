@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PaymentOrder } from "@prisma/client";
 import { asyncHandler } from "../lib/asyncHandler";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
@@ -228,26 +228,39 @@ export async function handleWebhook(rawBody: Buffer, signatureHeader: string | u
 
 async function applyPaidOrder(orderId: string, razorpayPaymentId: string) {
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const order = await tx.paymentOrder.findUnique({ where: { id: orderId } });
-    if (!order || order.status === "paid") return;
+    const order = await tx.$queryRaw<{
+      id: string;
+      userId: string;
+      kind: string;
+      referenceId: string;
+      billingCycle: string | null;
+      status: string;
+    }[]>`
+      SELECT id, "userId", kind, "referenceId", "billingCycle", status
+      FROM "PaymentOrder"
+      WHERE id = ${orderId}
+      FOR UPDATE
+    `;
+    const lockedOrder = order[0];
+    if (!lockedOrder || lockedOrder.status === "paid") return;
 
     await tx.paymentOrder.update({
-      where: { id: order.id },
+      where: { id: lockedOrder.id },
       data: { status: "paid", razorpayPaymentId, paidAt: new Date() },
     });
 
-    if (order.kind === "spark_pack") {
-      const pricing = SPARK_PACK_PRICES[order.referenceId as SparkPackId];
+    if (lockedOrder.kind === "spark_pack") {
+      const pricing = SPARK_PACK_PRICES[lockedOrder.referenceId as SparkPackId];
       await tx.user.update({
-        where: { id: order.userId },
+        where: { id: lockedOrder.userId },
         data: { sparkBalance: { increment: pricing?.sparks ?? 0 } },
       });
-    } else if (order.kind === "membership" && order.billingCycle) {
+    } else if (lockedOrder.kind === "membership" && lockedOrder.billingCycle) {
       await tx.user.update({
-        where: { id: order.userId },
+        where: { id: lockedOrder.userId },
         data: {
-          membershipTier: order.referenceId,
-          membershipRenewsAt: nextRenewalDate(order.billingCycle as BillingCycle),
+          membershipTier: lockedOrder.referenceId,
+          membershipRenewsAt: nextRenewalDate(lockedOrder.billingCycle as BillingCycle),
         },
       });
     }

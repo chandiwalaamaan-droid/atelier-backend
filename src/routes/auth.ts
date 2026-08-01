@@ -179,7 +179,8 @@ router.post("/google", asyncHandler(async (req, res) => {
   let payload;
   try {
     payload = await verifyGoogleCredential(credential);
-  } catch {
+  } catch (err) {
+    console.error("[auth] Google credential verification failed:", err);
     return res.status(401).json({ error: "Invalid Google sign-in token." });
   }
   if (!payload.email_verified) {
@@ -244,7 +245,8 @@ router.post("/google/complete", asyncHandler(async (req, res) => {
   let payload;
   try {
     payload = await verifyGoogleCredential(credential);
-  } catch {
+  } catch (err) {
+    console.error("[auth] Google credential verification failed:", err);
     return res.status(401).json({ error: "Invalid Google sign-in token." });
   }
   if (!payload.email_verified) {

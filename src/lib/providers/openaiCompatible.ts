@@ -164,62 +164,75 @@ export async function streamOpenAICompatibleChat(
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetChunkTimer = () => {
+      if (chunkTimer) clearTimeout(chunkTimer);
+      chunkTimer = setTimeout(() => {
+        if (!clientAborted) controller.abort();
+      }, timeoutMs);
+    };
+    resetChunkTimer();
 
-    while (true) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await reader.read();
-      } catch (err) {
-        // The user stopped generation mid-stream — return what was
-        // produced so far instead of treating this as a provider failure.
-        if (clientAborted) return fullText;
-        if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error(`Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
-        }
-        throw err;
-      }
-      const { done, value } = chunk;
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let newlineIndex;
-      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newlineIndex).trim();
-        buffer = buffer.slice(newlineIndex + 1);
-        if (!line.startsWith("data:")) continue;
-
-        const payload = line.slice(5).trim();
-        if (payload === "[DONE]") continue;
-
-        let parsed: any;
+    try {
+      while (true) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
         try {
-          parsed = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        const token: string | undefined = parsed?.choices?.[0]?.delta?.content;
-        if (token) {
-          if (!firstTokenReceived) {
-            firstTokenReceived = true;
-            clearTimeout(timer);
+          chunk = await reader.read();
+        } catch (err) {
+          if (clientAborted) return fullText;
+          if (err instanceof DOMException && err.name === "AbortError") {
+            throw new Error(firstTokenReceived
+              ? `Request to ${baseUrl} stream stalled for ${timeoutMs}ms mid-response.`
+              : `Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
           }
-          const visible = thinkFilter.feed(token);
-          if (visible) {
-            fullText += visible;
-            onToken(visible);
+          throw err;
+        }
+        const { done, value } = chunk;
+        if (done) break;
+        resetChunkTimer();
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line.startsWith("data:")) continue;
+
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") continue;
+
+          let parsed: any;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          const token: string | undefined = parsed?.choices?.[0]?.delta?.content;
+          if (token) {
+            if (!firstTokenReceived) {
+              firstTokenReceived = true;
+              clearTimeout(timer);
+            }
+            const visible = thinkFilter.feed(token);
+            if (visible) {
+              fullText += visible;
+              onToken(visible);
+            }
           }
         }
+        if (clientAborted) return fullText;
       }
-      if (clientAborted) return fullText;
-    }
 
-    const remainder = thinkFilter.flush();
-    if (remainder) {
-      fullText += remainder;
-      onToken(remainder);
-    }
+      const remainder = thinkFilter.flush();
+      if (remainder) {
+        fullText += remainder;
+        onToken(remainder);
+      }
 
-    return fullText;
+      return fullText;
+    } finally {
+      if (chunkTimer) clearTimeout(chunkTimer);
+    }
   } finally {
     clearTimeout(timer);
     if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);

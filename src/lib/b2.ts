@@ -19,30 +19,29 @@ import { randomUUID } from "crypto";
 
 let client: S3Client | null = null;
 let clientError: Error | null = null;
+let clientErrorAt = 0;
+const CLIENT_ERROR_RETRY_MS = 30_000;
 
 export function getClient(): S3Client {
   if (client) return client;
-  if (clientError) throw clientError;
+  if (clientError && Date.now() - clientErrorAt < CLIENT_ERROR_RETRY_MS) {
+    throw clientError;
+  }
 
   const keyId = process.env.B2_KEY_ID;
   const appKey = process.env.B2_APPLICATION_KEY;
   const rawEndpoint = process.env.B2_ENDPOINT;
 
   if (!keyId || !appKey || !rawEndpoint) {
-    clientError = new Error(
+    const err = new Error(
       "B2 storage is not configured. Set B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, and B2_ENDPOINT."
     );
-    throw clientError;
+    clientError = err;
+    clientErrorAt = Date.now();
+    throw err;
   }
 
-  // Accept B2_ENDPOINT with or without a "https://" prefix — strip it so we
-  // don't end up double-prefixing below (that produced a broken hostname
-  // like "<bucket>.https" when the env var already included the scheme).
   const endpoint = rawEndpoint.replace(/^https?:\/\//, "");
-
-  // B2's S3-compatible endpoint looks like
-  // "s3.us-east-005.backblazeb2.com" — the region is embedded in it, so we
-  // parse it out rather than requiring a separate env var.
   const region = endpoint.split(".")[1] || "us-east-005";
 
   client = new S3Client({

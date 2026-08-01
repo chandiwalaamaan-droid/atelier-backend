@@ -17,9 +17,15 @@ function genParamsOptions(params?: GenParams): Record<string, unknown> | undefin
   return Object.keys(options).length ? options : undefined;
 }
 
-export async function isOllamaAvailable(): Promise<boolean> {
+export async function isOllamaAvailable(timeoutMs = 3000): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE_URL}/api/tags`, { method: "GET" });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${BASE_URL}/api/tags`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     return res.ok;
   } catch {
     return false;
@@ -35,7 +41,6 @@ export async function streamOllamaChat(
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
-  // See openaiCompatible.ts — same client-stop vs. provider-timeout distinction.
   let clientAborted = clientSignal?.aborted ?? false;
   const onClientAbort = () => {
     clientAborted = true;
@@ -75,6 +80,14 @@ export async function streamOllamaChat(
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetChunkTimer = () => {
+      if (chunkTimer) clearTimeout(chunkTimer);
+      chunkTimer = setTimeout(() => {
+        if (!clientAborted) controller.abort();
+      }, timeoutMs);
+    };
+    resetChunkTimer();
 
     while (true) {
       let chunk: ReadableStreamReadResult<Uint8Array>;
@@ -83,12 +96,15 @@ export async function streamOllamaChat(
       } catch (err) {
         if (clientAborted) return fullText;
         if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error(`Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
+          throw new Error(firstTokenReceived
+            ? `Ollama stream stalled for ${timeoutMs}ms mid-response.`
+            : `Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
         }
         throw err;
       }
       const { done, value } = chunk;
       if (done) break;
+      resetChunkTimer();
       buffer += decoder.decode(value, { stream: true });
 
       let newlineIndex;

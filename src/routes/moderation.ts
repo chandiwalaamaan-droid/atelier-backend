@@ -127,9 +127,16 @@ router.post("/admin/reports/:id/resolve", asyncHandler(async (req, res) => {
     await prisma.character.update({ where: { id: report.characterId }, data: { isHidden: true, isPublic: false } });
   } else {
     // delete — the character (and its reports, cascading) is removed outright.
-    await prisma.character.delete({ where: { id: report.characterId } }).catch(() => {
-      // already deleted by the owner in the meantime — nothing left to do.
-    });
+    try {
+      await prisma.character.delete({ where: { id: report.characterId } });
+    } catch (err: any) {
+      if (err.code === "P2025") {
+        console.warn(`[moderation] character ${report.characterId} already deleted`);
+      } else {
+        console.error(`[moderation] failed to delete character ${report.characterId}:`, err);
+        throw err;
+      }
+    }
   }
 
   return res.json({ ok: true });

@@ -5,13 +5,13 @@
 // CLOUDFLARE_API_TOKEN to enable this provider; if unset, it's simply
 // skipped in the fallback chain (see routes/avatar.ts).
 //
-// Model defaults to DreamShaper 8 LCM: a community fine-tune of Stable
-// Diffusion that is known to be less aggressive with content filtering
-// than Flux-based models on Workers AI. Override with
+// Model defaults to Stable Diffusion XL: Cloudflare's highest-quality
+// text-to-image model for professional results. Override with
 // CLOUDFLARE_IMAGE_MODEL if you want a different Workers AI text-to-image
-// model (e.g. @cf/stabilityai/stable-diffusion-xl-base-1.0 for higher
-// quality but slower/more expensive per call).
-const DEFAULT_MODEL = "@cf/lykon/dreamshaper-8-lcm";
+// model (e.g. @cf/lykon/dreamshaper-8-lcm for faster generation with
+// acceptable quality, or @cf/black-forest-labs/flux-1-schnell for Flux
+// at the cost of stricter content filtering).
+const DEFAULT_MODEL = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
 
 export function isCloudflareConfigured(): boolean {
   return Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN);

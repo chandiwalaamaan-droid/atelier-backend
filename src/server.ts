@@ -7,12 +7,34 @@ import cron from "node-cron";
 import { runRetentionCleanup } from "./jobs/retentionCleanup";
 import authRoutes from "./routes/auth";
 import characterRoutes from "./routes/characters";
-import avatarRoutes from "./routes/avatar";
+import avatarRoutes, { startImageGenWorker } from "./routes/avatar";
 import chatRoutes from "./routes/chat";
 import healthRoutes from "./routes/health";
 import moderationRoutes from "./routes/moderation";
 import billingRoutes, { handleWebhook } from "./routes/billing";
 import imagesRoutes from "./routes/images";
+
+function validateEnv() {
+  const required = ["SESSION_SECRET", "DATABASE_URL"];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    console.error(`Missing required environment variables: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+
+  const FRONTEND_URL = process.env.FRONTEND_URL;
+  if (!FRONTEND_URL && process.env.NODE_ENV === "production") {
+    console.warn("WARNING: FRONTEND_URL is not set. CORS may block frontend requests in production.");
+  }
+
+  const PORT = Number(process.env.PORT || 4000);
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    console.error(`Invalid PORT: ${process.env.PORT}. Must be a number between 1 and 65535.`);
+    process.exit(1);
+  }
+}
+
+validateEnv();
 
 const app = express();
 
@@ -75,8 +97,22 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 const PORT = Number(process.env.PORT || 4000);
-app.listen(PORT, () => {
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`Invalid PORT: ${process.env.PORT}. Must be a number between 1 and 65535.`);
+  process.exit(1);
+}
+
+const server = app.listen(PORT, () => {
   console.log(`[atelier-backend] listening on :${PORT}`);
+  startImageGenWorker();
+});
+server.on("error", (err: any) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use.`);
+  } else {
+    console.error("Server error:", err);
+  }
+  process.exit(1);
 });
 
 // Daily sweep: warns users ~11 months inactive, anonymizes accounts inactive
