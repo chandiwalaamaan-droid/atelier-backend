@@ -94,7 +94,10 @@ export async function uploadAvatarBuffer(buffer: Buffer, publicId: string): Prom
 
   // Mirror the old Cloudinary "atelier/avatars/<publicId>" layout, and make
   // sure the key is unique even if callers reuse a publicId.
-  const safeId = publicId.includes(".") ? publicId : `${publicId}-${randomUUID().slice(0, 8)}.png`;
+  const extFromPublicId = publicId.includes(".") ? publicId.split(".").pop()!.toLowerCase() : "";
+  const knownExts = ["png", "jpg", "jpeg", "webp", "gif"];
+  const ext = knownExts.includes(extFromPublicId) ? extFromPublicId : "png";
+  const safeId = `${publicId}-${randomUUID().slice(0, 8)}.${ext}`;
   const key = `atelier/avatars/${safeId}`;
 
   await s3.send(

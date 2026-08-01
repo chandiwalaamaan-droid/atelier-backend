@@ -11,7 +11,7 @@
 // model (e.g. @cf/lykon/dreamshaper-8-lcm for faster generation with
 // acceptable quality, or @cf/black-forest-labs/flux-1-schnell for Flux
 // at the cost of stricter content filtering).
-const DEFAULT_MODEL = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
+const MODEL = process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/stabilityai/stable-diffusion-xl-base-1.0";
 
 export function isCloudflareConfigured(): boolean {
   return Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN);
@@ -38,8 +38,9 @@ export async function generateCloudflareImage(
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) throw new Error("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set");
+  if (!MODEL) throw new Error("CLOUDFLARE_IMAGE_MODEL is set but empty — provide a valid model name");
 
-  const model = process.env.CLOUDFLARE_IMAGE_MODEL || DEFAULT_MODEL;
+  const model = MODEL;
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
 
   const controller = new AbortController();

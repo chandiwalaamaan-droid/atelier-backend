@@ -42,6 +42,7 @@ async function acquire(): Promise<void> {
       const timer = setTimeout(() => {
         const idx = waiters.indexOf(resolve);
         if (idx !== -1) waiters.splice(idx, 1);
+        active -= 1;
         reject(new Error(
           `Image generation wait timed out after ${MAX_WAIT_MS / 1000}s. Please try again.`
         ));

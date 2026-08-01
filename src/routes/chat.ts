@@ -89,7 +89,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
+  const intelligence = engine?.intelligence ?? 5;
   const genParams = engine ? { temperature: engine.temperature, topP: engine.topP } : undefined;
+  const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
+  const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =
     typeof body.sceneDirective === "string" ? body.sceneDirective.trim().slice(0, 500) : undefined;
 
@@ -158,7 +161,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const relevant = regenTargetId
     ? allSinceSummary.filter((m: { id: string }) => m.id !== regenTargetId)
     : allSinceSummary;
-  const recentHistory = relevant.slice(-RECENT_MESSAGE_WINDOW);
+  const recentHistory = relevant.slice(-recentWindow);
 
   const system = buildSystemPrompt(character, {
     explicitMode,
@@ -166,6 +169,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     roleplayStyle,
     sceneDirective,
     voiceNotes,
+    engine,
   });
   const chatMessages = [
     { role: "system" as const, content: system },
@@ -224,7 +228,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
 
     // Fire-and-forget: fold older messages into the running memory summary
     // once the unsummarized window gets long.
-    maybeSummarize(characterId, userId).catch((err) => console.error("summarize failed", err));
+    maybeSummarize(characterId, userId, intelligence, recentWindow, summarizeTrigger).catch((err) => console.error("summarize failed", err));
   } catch (err) {
     console.error(err);
     if (!stopController.signal.aborted) {
@@ -378,15 +382,21 @@ router.post("/:characterId/speak", asyncHandler(async (req, res) => {
   }
 }));
 
-async function maybeSummarize(characterId: string, userId: string) {
+async function maybeSummarize(
+  characterId: string,
+  userId: string,
+  intelligence: number = 5,
+  recentWindow: number = RECENT_MESSAGE_WINDOW,
+  summarizeTrigger: number = SUMMARIZE_TRIGGER
+) {
   const character = await prisma.character.findUnique({ where: { id: characterId } });
   if (!character) return;
 
   const total = await prisma.message.count({ where: { characterId, userId } });
   const unsummarized = total - character.summarizedThrough;
-  if (unsummarized < SUMMARIZE_TRIGGER) return;
+  if (unsummarized < summarizeTrigger) return;
 
-  const toFoldCount = unsummarized - RECENT_MESSAGE_WINDOW;
+  const toFoldCount = unsummarized - recentWindow;
   if (toFoldCount <= 0) return;
 
   const toFold = await prisma.message.findMany({
@@ -401,7 +411,8 @@ async function maybeSummarize(characterId: string, userId: string) {
     character,
     character.memorySummary,
     toFold,
-    character.isExplicit
+    character.isExplicit,
+    intelligence
   );
 
   await prisma.character.update({
