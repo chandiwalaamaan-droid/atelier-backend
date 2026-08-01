@@ -6,9 +6,8 @@ import { getCurrentUserId } from "../lib/auth";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/b2";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
-import { createImageGenWorker, enqueueImageGen, ImageGenJobReturn, ImageGenJobResult, ImageGenJobData } from "../lib/imageQueue";
+import { acquireImageGenSlot, releaseImageGenSlot, ImageGenJobData, ImageGenJobResult } from "../lib/imageQueue";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "../lib/providers/circuitBreaker";
-import { Job } from "bullmq";
 
 const router = Router();
 
@@ -204,61 +203,58 @@ function buildBackgroundPrompt(
 }
 
 // ---------------------------------------------------------------------------
-// BullMQ processor — runs in worker(s)
+// Image generation
 // ---------------------------------------------------------------------------
 
-async function processImageJob(job: Job): Promise<ImageGenJobResult> {
-  const { prompt, isExplicit, kind } = job.data as ImageGenJobData;
-  const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
-  const cloudflareAvailable = isCloudflareConfigured();
-
-  const pollinationsFn = kind === "avatar"
-    ? () => withPollinationsRetry(() => generatePollinationsAvatar({ isExplicit }, prompt, timeoutMs))
-    : () => withPollinationsRetry(() => generatePollinationsBackground(isExplicit, prompt, timeoutMs));
-
-  const cloudflareFn = () => generateCloudflareImage(prompt, timeoutMs);
-
-  const pollinationsPromise = pollinationsFn()
-    .then((result) => ({ result, provider: "pollinations" } as const))
-    .catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      return Promise.reject(new Error(`pollinations: ${msg}`));
-    });
-
-  const cloudflarePromise = cloudflareAvailable
-    ? cloudflareFn()
-        .then((result) => ({ result, provider: "cloudflare" } as const))
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          return Promise.reject(new Error(`cloudflare: ${msg}`));
-        })
-    : Promise.reject(new Error("cloudflare: not configured"));
-
+async function processImageGen(data: ImageGenJobData): Promise<ImageGenJobResult> {
+  await acquireImageGenSlot();
   try {
-    const winner = await Promise.race([pollinationsPromise, cloudflarePromise]);
-    return { bytes: winner.result, provider: winner.provider };
-  } catch (pollinationsErr) {
+    const { prompt, isExplicit, kind } = data;
+    const timeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_SECONDS || "15") * 1000;
+    const cloudflareAvailable = isCloudflareConfigured();
+
+    const pollinationsFn = kind === "avatar"
+      ? () => withPollinationsRetry(() => generatePollinationsAvatar({ isExplicit }, prompt, timeoutMs))
+      : () => withPollinationsRetry(() => generatePollinationsBackground(isExplicit, prompt, timeoutMs));
+
+    const cloudflareFn = () => generateCloudflareImage(prompt, timeoutMs);
+
+    const pollinationsPromise = pollinationsFn()
+      .then((result) => ({ result, provider: "pollinations" } as const))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        return Promise.reject(new Error(`pollinations: ${msg}`));
+      });
+
+    const cloudflarePromise = cloudflareAvailable
+      ? cloudflareFn()
+          .then((result) => ({ result, provider: "cloudflare" } as const))
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            return Promise.reject(new Error(`cloudflare: ${msg}`));
+          })
+      : Promise.reject(new Error("cloudflare: not configured"));
+
     try {
-      const winner = await cloudflarePromise;
+      const winner = await Promise.race([pollinationsPromise, cloudflarePromise]);
       return { bytes: winner.result, provider: winner.provider };
-    } catch (cloudflareErr) {
-      const pMsg = pollinationsErr instanceof Error ? pollinationsErr.message : String(pollinationsErr);
-      const cMsg = cloudflareErr instanceof Error ? cloudflareErr.message : String(cloudflareErr);
-      throw new Error(`All providers failed: ${pMsg}; ${cMsg}`);
+    } catch (pollinationsErr) {
+      try {
+        const winner = await cloudflarePromise;
+        return { bytes: winner.result, provider: winner.provider };
+      } catch (cloudflareErr) {
+        const pMsg = pollinationsErr instanceof Error ? pollinationsErr.message : String(pollinationsErr);
+        const cMsg = cloudflareErr instanceof Error ? cloudflareErr.message : String(cloudflareErr);
+        throw new Error(`All providers failed: ${pMsg}; ${cMsg}`);
+      }
     }
+  } finally {
+    releaseImageGenSlot();
   }
 }
 
 export function startImageGenWorker(): void {
-  const processor = async (job: Job): Promise<ImageGenJobResult> => {
-    try {
-      return await processImageJob(job);
-    } catch (err) {
-      console.error(`[image-queue] Job ${job.id} failed:`, err);
-      throw err;
-    }
-  };
-  createImageGenWorker(processor);
+  console.log("[image-queue] Using in-memory queue (BullMQ Postgres backend disabled)");
 }
 
 // ---------------------------------------------------------------------------
@@ -306,8 +302,7 @@ router.post("/:id/avatar/generate", asyncHandler(async (req, res) => {
   const prompt = buildAvatarPrompt(character, customPrompt);
 
   try {
-    const { jobId, promise } = await enqueueImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "avatar" });
-    const result = await promise;
+    const result = await processImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "avatar" });
     const cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
     const publicId = `${req.params.id}-${Date.now()}-generated`;
     const avatarUrl = await uploadAvatarBuffer(cleanBytes, publicId);
@@ -339,8 +334,7 @@ router.post("/:id/background/generate", asyncHandler(async (req, res) => {
   const prompt = buildBackgroundPrompt(character, customPrompt);
 
   try {
-    const { jobId, promise } = await enqueueImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "background" });
-    const result = await promise;
+    const result = await processImageGen({ prompt, isExplicit: !!character.isExplicit, kind: "background" });
     let cleanBytes = await sharp(result.bytes).sharpen().toBuffer().catch(() => result.bytes);
     if (cleanBytes.length) {
       cleanBytes = await sharp(cleanBytes)

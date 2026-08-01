@@ -7,7 +7,7 @@ import cron from "node-cron";
 import { runRetentionCleanup } from "./jobs/retentionCleanup";
 import authRoutes from "./routes/auth";
 import characterRoutes from "./routes/characters";
-import avatarRoutes, { startImageGenWorker } from "./routes/avatar";
+import avatarRoutes from "./routes/avatar";
 import chatRoutes from "./routes/chat";
 import healthRoutes from "./routes/health";
 import moderationRoutes from "./routes/moderation";
@@ -104,7 +104,6 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 
 const server = app.listen(PORT, () => {
   console.log(`[atelier-backend] listening on :${PORT}`);
-  startImageGenWorker();
 });
 server.on("error", (err: any) => {
   if (err.code === "EADDRINUSE") {

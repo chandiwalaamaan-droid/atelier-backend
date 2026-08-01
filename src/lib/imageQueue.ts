@@ -1,6 +1,3 @@
-import { Queue, Worker, Job, QueueEvents, createPostgresBackend } from "bullmq";
-import type { PostgresConnectionOptions } from "bullmq";
-
 export type ImageGenJobData = {
   prompt: string;
   isExplicit: boolean;
@@ -17,108 +14,75 @@ export type ImageGenJobReturn = {
   promise: Promise<ImageGenJobResult>;
 };
 
-const QUEUE_NAME = "image-generation";
-const WORKER_CONCURRENCY = Number(process.env.IMAGE_GEN_WORKER_CONCURRENCY || "4");
-const DATABASE_URL = process.env.DATABASE_URL;
+const MAX_CONCURRENT = Number(process.env.IMAGE_GEN_WORKER_CONCURRENCY || "4");
+const MAX_WAIT_MS = Number(process.env.IMAGE_GEN_WAIT_TIMEOUT_MS || "60000");
+const MAX_QUEUE_DEPTH = Number(process.env.IMAGE_GEN_MAX_QUEUE_DEPTH || "50");
 
-if (!DATABASE_URL) {
-  throw new Error("DATABASE_URL is required for BullMQ Postgres backend");
-}
+let active = 0;
+const waiters: (() => void)[] = [];
 
-const connection: PostgresConnectionOptions = DATABASE_URL;
-
-const postgresBackendFactory = createPostgresBackend as any;
-
-let queue: Queue | null = null;
-let worker: Worker | null = null;
-let queueEvents: QueueEvents | null = null;
-
-export function getImageGenQueue(): Queue {
-  if (!queue) {
-    queue = new Queue(
-      QUEUE_NAME,
-      {
-        connection: connection as any,
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 1000,
-          },
-          removeOnComplete: {
-            count: 100,
-            age: 60 * 60,
-          },
-          removeOnFail: {
-            count: 200,
-            age: 24 * 60 * 60,
-          },
-        },
-      },
-      postgresBackendFactory as any
-    ) as Queue;
+async function acquire(): Promise<void> {
+  if (waiters.length >= MAX_QUEUE_DEPTH) {
+    throw new Error(
+      `Image generation queue is full (${MAX_QUEUE_DEPTH} requests waiting). ` +
+      `Please try again in a moment.`
+    );
   }
-  return queue;
-}
 
-export function getOrCreateQueueEvents(): QueueEvents {
-  if (!queueEvents) {
-    queueEvents = new QueueEvents(
-      QUEUE_NAME,
-      {
-        connection: connection as any,
-      },
-      postgresBackendFactory as any
-    ) as QueueEvents;
-  }
-  return queueEvents;
-}
-
-export function createImageGenWorker(
-  processor: (job: Job) => Promise<ImageGenJobResult>,
-): Worker {
-  if (!worker) {
-    worker = new Worker(
-      QUEUE_NAME,
-      processor,
-      {
-        connection: connection as any,
-        concurrency: WORKER_CONCURRENCY,
-      },
-      postgresBackendFactory as any
-    ) as Worker;
-    worker.on("failed", (job, err) => {
-      console.error(`[image-queue] Job ${job?.id} failed:`, err);
+  const deadline = Date.now() + MAX_WAIT_MS;
+  while (active >= MAX_CONCURRENT) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(
+        `Image generation is busy and the wait timed out after ${MAX_WAIT_MS / 1000}s. ` +
+        `Please try again.`
+      );
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = waiters.indexOf(resolve);
+        if (idx !== -1) waiters.splice(idx, 1);
+        reject(new Error(
+          `Image generation wait timed out after ${MAX_WAIT_MS / 1000}s. Please try again.`
+        ));
+      }, remaining);
+      waiters.push(resolve);
     });
   }
-  return worker;
+  active += 1;
 }
 
-export async function enqueueImageGen(data: ImageGenJobData): Promise<ImageGenJobReturn> {
-  const q = getImageGenQueue();
-  const jobId = `${data.kind}:${Buffer.from(data.prompt).toString("base64url")}`;
-  const job = await q.add("generate", data, {
-    jobId,
-    removeOnComplete: false,
-  });
-  const queueEvents = getOrCreateQueueEvents();
-  return {
-    jobId: job.id!,
-    promise: job.waitUntilFinished(queueEvents).then((result: any) => result as ImageGenJobResult),
-  };
+function release(): void {
+  active -= 1;
+  const next = waiters.shift();
+  if (next) next();
+}
+
+export async function acquireImageGenSlot(): Promise<void> {
+  await acquire();
+}
+
+export function releaseImageGenSlot(): void {
+  release();
+}
+
+export function startImageGenWorker(): void {
+  console.log(
+    `[image-queue] Using in-memory queue ` +
+    `(concurrency=${MAX_CONCURRENT}, maxWait=${MAX_WAIT_MS}ms, maxQueueDepth=${MAX_QUEUE_DEPTH})`
+  );
 }
 
 export async function closeImageGenQueue(): Promise<void> {
-  if (worker) {
-    await worker.close();
-    worker = null;
+  const errors: Error[] = [];
+  for (const resolve of waiters.splice(0)) {
+    try {
+      resolve();
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+    }
   }
-  if (queueEvents) {
-    await queueEvents.close();
-    queueEvents = null;
-  }
-  if (queue) {
-    await queue.close();
-    queue = null;
+  if (errors.length > 0) {
+    console.error(`[image-queue] Drained ${errors.length} waiters on shutdown`);
   }
 }
