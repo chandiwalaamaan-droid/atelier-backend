@@ -1,6 +1,5 @@
-import { Queue, Worker, Job, QueueEvents } from "bullmq";
-import { createPostgresBackend } from "bullmq/postgres";
-import type { PostgresConnectionOptions } from "bullmq/postgres";
+import { Queue, Worker, Job, QueueEvents, createPostgresBackend } from "bullmq";
+import type { PostgresConnectionOptions } from "bullmq";
 
 export type ImageGenJobData = {
   prompt: string;
@@ -28,7 +27,7 @@ if (!DATABASE_URL) {
 
 const connection: PostgresConnectionOptions = DATABASE_URL;
 
-const postgresBackendFactory = createPostgresBackend;
+const postgresBackendFactory = createPostgresBackend as any;
 
 let queue: Queue | null = null;
 let worker: Worker | null = null;
@@ -56,8 +55,8 @@ export function getImageGenQueue(): Queue {
           },
         },
       },
-      postgresBackendFactory
-    );
+      postgresBackendFactory as any
+    ) as Queue;
   }
   return queue;
 }
@@ -69,8 +68,8 @@ export function getOrCreateQueueEvents(): QueueEvents {
       {
         connection: connection as any,
       },
-      postgresBackendFactory
-    );
+      postgresBackendFactory as any
+    ) as QueueEvents;
   }
   return queueEvents;
 }
@@ -86,8 +85,8 @@ export function createImageGenWorker(
         connection: connection as any,
         concurrency: WORKER_CONCURRENCY,
       },
-      postgresBackendFactory
-    );
+      postgresBackendFactory as any
+    ) as Worker;
     worker.on("failed", (job, err) => {
       console.error(`[image-queue] Job ${job?.id} failed:`, err);
     });
