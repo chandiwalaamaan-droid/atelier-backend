@@ -28,39 +28,49 @@ if (!DATABASE_URL) {
 
 const connection: PostgresConnectionOptions = DATABASE_URL;
 
+const postgresBackendFactory = createPostgresBackend;
+
 let queue: Queue | null = null;
 let worker: Worker | null = null;
 let queueEvents: QueueEvents | null = null;
 
 export function getImageGenQueue(): Queue {
   if (!queue) {
-    queue = new Queue(QUEUE_NAME, {
-      connection: connection as any,
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-          type: "exponential",
-          delay: 1000,
-        },
-        removeOnComplete: {
-          count: 100,
-          age: 60 * 60,
-        },
-        removeOnFail: {
-          count: 200,
-          age: 24 * 60 * 60,
+    queue = new Queue(
+      QUEUE_NAME,
+      {
+        connection: connection as any,
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: "exponential",
+            delay: 1000,
+          },
+          removeOnComplete: {
+            count: 100,
+            age: 60 * 60,
+          },
+          removeOnFail: {
+            count: 200,
+            age: 24 * 60 * 60,
+          },
         },
       },
-    });
+      postgresBackendFactory
+    );
   }
   return queue;
 }
 
 export function getOrCreateQueueEvents(): QueueEvents {
   if (!queueEvents) {
-    queueEvents = new QueueEvents(QUEUE_NAME, {
-      connection: connection as any,
-    });
+    queueEvents = new QueueEvents(
+      QUEUE_NAME,
+      {
+        connection: connection as any,
+      },
+      postgresBackendFactory
+    );
   }
   return queueEvents;
 }
@@ -69,10 +79,15 @@ export function createImageGenWorker(
   processor: (job: Job) => Promise<ImageGenJobResult>,
 ): Worker {
   if (!worker) {
-    worker = new Worker(QUEUE_NAME, processor, {
-      connection: connection as any,
-      concurrency: WORKER_CONCURRENCY,
-    });
+    worker = new Worker(
+      QUEUE_NAME,
+      processor,
+      {
+        connection: connection as any,
+        concurrency: WORKER_CONCURRENCY,
+      },
+      postgresBackendFactory
+    );
     worker.on("failed", (job, err) => {
       console.error(`[image-queue] Job ${job?.id} failed:`, err);
     });
