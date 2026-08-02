@@ -506,7 +506,14 @@ export async function streamChatWithFallback(
     // stop and return immediately, rather than treating the cut-off as a
     // provider failure and falling through to the next candidate.
     if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
-    if (result) return { text: result.text, provider: candidate.name };
+    // A provider can resolve successfully (no thrown error) yet still hand
+    // back empty text — e.g. a silent content-filter refusal collapsed to
+    // "", or a one-off empty completion. `{ text: "" }` is a truthy object,
+    // so without this check the chain would treat that as a final answer
+    // and stop, instead of trying the next provider — surfacing as a
+    // blank reply with no error shown to the user.
+    if (result && result.text.trim().length > 0) return { text: result.text, provider: candidate.name };
+    if (result) errors.push(`${candidate.name}: returned empty text`);
   }
 
   if (attempted === 0) {
@@ -519,7 +526,8 @@ export async function streamChatWithFallback(
       lastAttemptedName = candidate.name;
       const result = await attemptStream(candidate, messages, onToken, t0, errors, clientSignal, params);
       if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
-      if (result) return { text: result.text, provider: candidate.name };
+      if (result && result.text.trim().length > 0) return { text: result.text, provider: candidate.name };
+      if (result) errors.push(`${candidate.name}: returned empty text`);
     }
   }
 
