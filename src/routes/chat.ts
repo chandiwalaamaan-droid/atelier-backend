@@ -18,6 +18,7 @@ import {
   TTS_VOICES,
   parseSpiceLevel,
   parseRoleplayStyle,
+  cleanAssistantResponse,
 } from "../lib/providers";
 import type { TtsVoice } from "../lib/providers";
 import { getEngineConfig } from "../lib/providers/engines";
@@ -120,9 +121,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     if (!target) {
       return res.status(404).json({ error: "That message couldn't be found." });
     }
-    const positionAmongAll = await prisma.message.count({
-      where: { characterId, userId, createdAt: { lte: target.createdAt } },
-    });
+    const positionAmongAll =
+      (await prisma.message.count({
+        where: { characterId, userId, createdAt: { lt: target.createdAt } },
+      })) + 1;
     if (positionAmongAll <= character.summarizedThrough) {
       return res.status(400).json({ error: "That message is too old to edit." });
     }
@@ -210,11 +212,12 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     );
 
     if (fullText.trim().length > 0) {
+      const finalText = cleanAssistantResponse(fullText.trim());
       if (regenTargetId) {
         await prisma.message.delete({ where: { id: regenTargetId } });
       }
       await prisma.message.create({
-        data: { characterId, userId, role: "assistant", content: fullText.trim() },
+        data: { characterId, userId, role: "assistant", content: finalText },
       });
     }
     console.log(
@@ -378,6 +381,12 @@ router.post("/:characterId/speak", asyncHandler(async (req, res) => {
     return res.send(combined);
   } catch (err) {
     console.error("[chat] TTS synthesis failed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("model_terms_required") || message.includes("requires terms acceptance")) {
+      return res.status(502).json({
+        error: "Voice playback needs the Groq Orpheus model terms to be accepted in the Groq console. Please contact the server admin.",
+      });
+    }
     return res.status(502).json({ error: "Couldn't generate audio right now. Please try again." });
   }
 }));

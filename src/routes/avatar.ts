@@ -91,7 +91,7 @@ async function generatePollinationsAvatar(
   try {
     apiRes = await fetch(url, { signal: controller.signal });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`Pollinations request timed out after ${timeoutMs / 1000}s`);
     }
     throw err;
@@ -136,7 +136,7 @@ async function generatePollinationsBackground(
   try {
     apiRes = await fetch(url, { signal: controller.signal });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`Pollinations request timed out after ${timeoutMs / 1000}s`);
     }
     throw err;

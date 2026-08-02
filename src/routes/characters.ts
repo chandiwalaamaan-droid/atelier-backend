@@ -52,7 +52,7 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
     ? String(raw.accentColor)
     : "#c9a227";
   const isExplicit = raw.isExplicit === true;
-  const isPublic = raw.isPublic === true;
+  const isPublic = (raw.isPublic === true) && !isExplicit;
   const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
   // Exact creator-specified appearance description — used verbatim as the
   // primary image-gen prompt (avatar/background) and as the visual identity
@@ -319,7 +319,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : existing.accentColor;
   const isExplicit = typeof body.isExplicit === "boolean" ? body.isExplicit : existing.isExplicit;
   const requestedPublic = typeof body.isPublic === "boolean" ? body.isPublic : existing.isPublic;
-  const isPublic = requestedPublic;
+  const isPublic = requestedPublic && !isExplicit;
   const roleplayNotes = isExplicit
     ? clean(body.roleplayNotes, existing.roleplayNotes ?? "")
     : "";

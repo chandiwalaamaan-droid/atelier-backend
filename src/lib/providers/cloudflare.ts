@@ -58,7 +58,7 @@ export async function generateCloudflareImage(
       signal: controller.signal,
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`Cloudflare Workers AI request timed out after ${timeoutMs / 1000}s`);
     }
     throw err;

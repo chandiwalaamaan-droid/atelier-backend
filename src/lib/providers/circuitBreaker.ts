@@ -101,9 +101,9 @@ export function isRateLimitError(error: unknown): boolean {
 }
 
 export function isTimeoutError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error && error.name === "AbortError") return true;
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return message.includes("timed out") || message.includes("timeout");
+  return message.includes("timed out") || message.includes("timeout") || message.includes("aborted");
 }
 
 function envFloat(name: string, def: number): number {

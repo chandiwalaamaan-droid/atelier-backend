@@ -65,7 +65,7 @@ export async function streamOllamaChat(
       });
     } catch (err) {
       if (clientAborted) return "";
-      if (err instanceof DOMException && err.name === "AbortError") {
+      if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
       }
       throw err;
@@ -95,7 +95,7 @@ export async function streamOllamaChat(
         chunk = await reader.read();
       } catch (err) {
         if (clientAborted) return fullText;
-        if (err instanceof DOMException && err.name === "AbortError") {
+        if (err instanceof Error && err.name === "AbortError") {
           throw new Error(firstTokenReceived
             ? `Ollama stream stalled for ${timeoutMs}ms mid-response.`
             : `Ollama timed out after ${timeoutMs}ms waiting for a first response.`);
@@ -157,7 +157,7 @@ export async function completeOllamaChat(
         signal: controller.signal,
       });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+      if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Ollama timed out after ${timeoutMs}ms.`);
       }
       throw err;

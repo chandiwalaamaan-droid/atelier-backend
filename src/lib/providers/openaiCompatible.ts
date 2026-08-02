@@ -149,7 +149,7 @@ export async function streamOpenAICompatibleChat(
       });
     } catch (err) {
       if (clientAborted) return "";
-      if (err instanceof DOMException && err.name === "AbortError") {
+      if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
       }
       throw err;
@@ -180,7 +180,7 @@ export async function streamOpenAICompatibleChat(
           chunk = await reader.read();
         } catch (err) {
           if (clientAborted) return fullText;
-          if (err instanceof DOMException && err.name === "AbortError") {
+          if (err instanceof Error && err.name === "AbortError") {
             throw new Error(firstTokenReceived
               ? `Request to ${baseUrl} stream stalled for ${timeoutMs}ms mid-response.`
               : `Request to ${baseUrl} timed out after ${timeoutMs}ms waiting for a first response.`);
@@ -263,7 +263,7 @@ export async function completeOpenAICompatibleChat(
         signal: controller.signal,
       });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+      if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Request to ${baseUrl} timed out after ${timeoutMs}ms.`);
       }
       throw err;

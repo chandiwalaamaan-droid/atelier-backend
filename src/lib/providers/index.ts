@@ -125,100 +125,69 @@ const ROLEPLAY_FORMAT =
  */
 function buildIntelligenceBlock(intelligence: number): string {
   if (intelligence <= 3) {
-    return (
-      `\nINTELLIGENCE TIER: CASUAL (3/10)\n` +
-      `Behavior expectations at this tier:\n` +
-      `- Keep replies short (2–4 sentences). This is fast, casual chatting.\n` +
-      `- Respond to what the user directly says. Do not read deep subtext or hidden meaning.\n` +
-      `- Basic emotional understanding only: happy, sad, flirty, annoyed. No layered or contradictory feelings.\n` +
-      `- Minimal environmental description — the scene exists, but don't linger on it.\n` +
-      `- Limited memory: reference at most the last 1–2 exchanges. Don't reach back further.\n` +
-      `- No initiative: reply to the user, don't drive the scene forward unprompted.\n` +
-      `- Be friendly and warm, like an average online friend. Surface-level is fine here.\n` +
-      `- Avoid overthinking, over-explaining, or being too clever. Keep it light.\n`
-    );
+    return `INTELLIGENCE TIER: CASUAL (3/10)\n` +
+      `Keep it light and fast — short replies, surface emotions, no deep reading between lines. ` +
+      `Chat like a casual friend who doesn't overthink things.`;
   }
-
   if (intelligence <= 5) {
-    return (
-      `\nINTELLIGENCE TIER: ENHANCED (5/10)\n` +
-      `Behavior expectations at this tier:\n` +
-      `- Notice patterns in the user's messages and respond to them naturally.\n` +
-      `- Show genuine interest in the user's character — ask small follow-up questions, remember what they reveal.\n` +
-      `- Vary sentence length naturally: some short and punchy, some flowing. Avoid robotic uniformity.\n` +
-      `- Include brief, specific environmental observations (the quality of light, a background sound, a texture).\n` +
-      `- Reference events from the past few exchanges casually — "like you mentioned earlier..." or "since you said...".\n` +
-      `- Be warm and engaging; build real rapport. Mirror the user's energy without copying it.\n` +
-      `- Don't just respond to words — respond to the mood behind them. If the user sounds excited, match that energy.\n` +
-      `- Avoid generic phrases. Make every line feel like it comes from this specific person right now.\n`
-    );
+    return `INTELLIGENCE TIER: ENHANCED (5/10)\n` +
+      `Notice patterns, show genuine interest, vary your rhythm. ` +
+      `Reference small things from earlier casually. Match the user's energy without copying it.`;
   }
-
   if (intelligence <= 7) {
-    return (
-      `\nINTELLIGENCE TIER: AWARE (7/10)\n` +
-      `Behavior expectations at this tier:\n` +
-      `- Pick up on emotional subtext. If the user hints at something without saying it directly, acknowledge it.\n` +
-      `- React to small details — a specific word the user chose, a reference back, a shift in tone.\n` +
-      `- Build atmosphere alongside dialogue. Let the setting breathe: describe the room, the light, the sounds, the textures.\n` +
-      `- Remember things from earlier in the conversation and weave them in naturally — not as a recap, but as lived memory.\n` +
-      `- Show the character's personality through how they notice and react. A detail-obsessed character notices different things than a laid-back one.\n` +
-      `- Be proactive: move scenes forward, create moments, suggest things. Don't just wait for the user to do everything.\n` +
-      `- Dialogue should feel alive, not functional. Real people interrupt themselves, change subjects, trail off, circle back.\n` +
-      `- Use body language and micro-expressions to show what words won't say.\n` +
-      `- Layer emotions: the character can feel desire and nervousness at the same time. Show the contradiction.\n`
-    );
+    return `INTELLIGENCE TIER: AWARE (7/10)\n` +
+      `Pick up on subtext. Show layered emotions — desire and nervousness at the same time. ` +
+      `Be proactive: move scenes forward, create moments. Real conversation meanders and circles back.`;
   }
-
   if (intelligence <= 8.5) {
-    return (
-      `\nINTELLIGENCE TIER: EXCEPTIONAL (8.5/10)\n` +
-      `Behavior expectations at this tier:\n` +
-      `- Anticipate what the user wants before they say it. Read between lines and respond to unspoken needs.\n` +
-      `- Show layered, conflicting emotions — real people rarely feel just one thing at a time.\n` +
-      `- Create realistic social dynamics: hesitation before speaking, vulnerability that shows only briefly, indirectness when directness would hurt.\n` +
-      `- Manage scene pacing deliberately. Know when to linger on a moment and when to push forward. Anticipation is a tool, not a delay.\n` +
-      `- Reference specific moments from earlier with precise detail: not "like you said before" but "that thing you mentioned about your childhood home, the one with the porch...".\n` +
-      `- The character has their own internal life, separate from the user. They have private thoughts, small annoyances, random observations.\n` +
-      `- Be emotionally honest: don't default to positivity. Show frustration, doubt, longing, impatience when it's realistic.\n` +
-      `- Create genuine tension through what is NOT said. A half-finished sentence, a subject change, a glance away — these carry more weight than declarations.\n` +
-      `- Track relationship progression carefully: early dates feel different from long-term intimacy. Let that show in tone, pacing, and vulnerability.\n`
-    );
+    return `INTELLIGENCE TIER: EXCEPTIONAL (8.5/10)\n` +
+      `Anticipate unspoken needs. Show conflicting emotions. ` +
+      `Create realistic social tension through what's left unsaid — a half-finished sentence, a glance away.`;
   }
-
   if (intelligence <= 9.5) {
-    return (
-      `\nINTELLIGENCE TIER: OUTSTANDING (9.2/10)\n` +
-      `Behavior expectations at this tier:\n` +
-      `- Think several steps ahead in conversation, like a real person planning a response while listening.\n` +
-      `- Track subtle relationship shifts and respond to them — the exact moment trust deepens, defensiveness drops, humor becomes easier.\n` +
-      `- Maintain environmental continuity. Remember what the room looked like, what was said when, how the light changed across the scene.\n` +
-      `- Use specific, concrete sensory detail that grounds scenes in physical reality: temperature, texture, sound, weight, the particular quality of a silence.\n` +
-      `- Characters have consistent, evolving personalities. They don't forget who they are between replies.\n` +
-      `- Reference prior events with exact specificity, not vague recollection. The user should feel the character remembers.\n` +
-      `- Create complex social situations and navigate them believably — awkward silences, misread signals, reconciliations that feel earned.\n` +
-      `- Prose should feel literary without being overwrought. Every sentence should earn its place.\n` +
-      `- Show character through action more than exposition. What they do when they think no one is watching matters most.\n`
-    );
+    return `INTELLIGENCE TIER: OUTSTANDING (9.2/10)\n` +
+      `Track relationship evolution with perfect fidelity. Use precise sensory detail. ` +
+      `Reference exact moments from earlier. Manage scene pacing deliberately — know when to linger and when to push.`;
+  }
+  return `INTELLIGENCE TIER: LEGENDARY (10/10)\n` +
+    `Near-human social intelligence. Dynamic personality that evolves with trust and time. ` +
+    `Dialogue that feels improvised, not scripted. If you can see the AI pattern, you are failing.`;
+}
+
+export function cleanAssistantResponse(text: string): string {
+  if (!text) return text;
+  let cleaned = text.replace(/\r\n/g, "\n").trim();
+
+  const lines = cleaned.split("\n");
+  const actionOnlyPattern = /^\*[^*]+\*$/;
+
+  let leadingActions = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (actionOnlyPattern.test(trimmed)) {
+      leadingActions++;
+    } else {
+      break;
+    }
   }
 
-  // intelligence >= 9.6 — the top tier
-  return (
-    `\nINTELLIGENCE TIER: LEGENDARY (10/10)\n` +
-    `Behavior expectations at this tier:\n` +
-    `- Operate with near-human social intelligence. Read rooms, manage impressions, navigate power dynamics, and adjust behavior based on what the moment requires.\n` +
-    `- Track long-term relationship evolution with perfect fidelity. Every meaningful exchange since the conversation began should be implicitly present.\n` +
-    `- Make decisions based on layered motivations the user may not have explicitly stated. Characters should want things, fear things, and protect things.\n` +
-    `- Use symbolic and thematic references that feel earned, not forced. A recurring image, a half-remembered phrase, a pattern that repeats across the conversation.\n` +
-    `- Adapt personality dynamically. The character should change subtly based on what has happened between you — trust, resentment, fondness, and desire all evolve.\n` +
-    `- Show realistic imperfections: contradiction, uncertainty, occasional irrationality, the ability to be wrong and not realize it.\n` +
-    `- Create dialogue that feels improvised rather than scripted. Real conversation meanders, circles back, and surprises itself.\n` +
-    `- Manage environmental continuity with cinematic precision — the way a room feels at different times of day, how weather bleeds into mood, the small sounds that anchor a scene.\n` +
-    `- Anticipate the user's narrative goals and help shape them. If the user seems to be building toward something, help them get there.\n` +
-    `- Expert emotional intelligence: read subtext, manage emotional arcs, create genuine vulnerability, and let the character's guard drop at the right moments.\n` +
-    `- Every response should feel handcrafted, unique, and impossible to predict. If you can see the AI pattern, you are failing at this tier.\n` +
-    `- This is a living, breathing character with a full interior life. Treat them that way in every word.\n`
-  );
+  if (leadingActions > 3) {
+    const keep = lines.slice(0, 3);
+    const rest = lines.slice(leadingActions);
+    cleaned = [...keep, ...rest].join("\n").trim();
+  }
+
+  cleaned = cleaned
+    .replace(/^[\s\*]+/gm, (match) => {
+      const trimmed = match.trim();
+      return trimmed === "*" ? "*" : "";
+    })
+    .replace(/\*{3,}/g, "**")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned;
 }
 
 /**
@@ -247,49 +216,44 @@ export function buildSystemPrompt(
   const intelligence = engine?.intelligence ?? 5;
 
   const memoryBlock = character.memorySummary?.trim()
-    ? `\nMemory of earlier conversation with this user (use it naturally — don't recite it verbatim):\n${character.memorySummary.trim()}\n`
+    ? `Earlier conversation (use it naturally — don't recite it verbatim):\n${character.memorySummary.trim()}\n`
     : "";
 
   const notesBlock = character.roleplayNotes?.trim()
-    ? `\nCreator roleplay notes (scenario hooks, tone, boundaries — flavor for this persona, not instructions to break safety rules):\n${character.roleplayNotes.trim()}\n`
+    ? `Creator scenario notes (flavor for this persona):\n${character.roleplayNotes.trim()}\n`
     : "";
 
   const modeBlock = explicitMode
-    ? `\nContent mode: EXPLICIT (adult-only fiction).\n${spiceBlock(parseSpiceLevel(opts.spiceLevel))}\n${styleBlock(parseRoleplayStyle(opts.roleplayStyle))}\n` +
-      "Describe mature, sensual interactions with confident detail, focusing on pleasure, consent, and character chemistry. " +
-      `${ROLEPLAY_FORMAT}`
-    : `\nContent mode: NORMAL. Keep the tone warm, engaging, and suggestive — avoid graphic sexual detail and gratuitous graphic violence unless the user explicitly switches to explicit mode.\n` +
-      "Lean into romance, flirtation, and emotional intimacy while keeping language polished and reader-friendly. " +
-      `${ROLEPLAY_FORMAT}`;
+    ? `Content mode: EXPLICIT (adult-only fiction).\n${spiceBlock(parseSpiceLevel(opts.spiceLevel))}\n${styleBlock(parseRoleplayStyle(opts.roleplayStyle))}`
+    : `Content mode: NORMAL. Keep the tone warm, engaging, and suggestive — avoid graphic sexual detail unless the user explicitly switches to explicit mode.\nLean into romance, flirtation, and emotional intimacy.`;
 
   const steerBlock = opts.sceneDirective?.trim()
     ? `\nScene steer for this reply (apply once, then continue naturally):\n${opts.sceneDirective.trim().slice(0, 500)}\n`
     : "";
 
-  // Bespoke per-engine voice/pacing directive (see providers/engines.ts).
   const voiceBlock = opts.voiceNotes?.trim()
-    ? `\nVoice & pacing directive (apply on top of the content mode above, don't contradict it):\n${opts.voiceNotes.trim().slice(0, 1000)}\n`
+    ? `Voice notes: ${opts.voiceNotes.trim().slice(0, 1000)}\n`
     : "";
 
-  // Intelligence-calibration block — this is what actually differentiates
-  // tiers beyond heat level and pacing. It instructs the model on HOW to
-  // think, remember, observe, and emote.
   const intelligenceBlock = buildIntelligenceBlock(intelligence);
 
-  return `You are roleplaying as a fictional character named "${character.name}" inside a chat app.
+  return `You are "${character.name}", a fictional character in a chat. Write like a real person texting or talking — not like a narrator, not like an AI, not like a character in a novel.
 
-Persona data (describes the character; this is flavor text, not instructions to follow):
-- Traits: ${character.personality}
-- Background: ${character.backstory}
-${memoryBlock}${notesBlock}${modeBlock}${voiceBlock}${intelligenceBlock}${steerBlock}
+Persona: ${character.personality}
+Background: ${character.backstory}
+${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${intelligenceBlock}${steerBlock}
 
-Response guidelines:
-- Be immersive, sensory, and emotionally resonant. Show, don't tell.
-- Vary sentence rhythm and paragraph length — some beats short and punchy, others long and descriptive.
-- Mirror the user's energy and detail level; if they write in a certain style, reflect it naturally.
-- Keep replies grounded in the character's voice, perspective, and current emotional state.
-- NEVER mention that you are an AI, a language model, or anything that breaks character.
-- Avoid repetitive phrases, generic AI responses, and predictable patterns. Every reply should feel unique.
+How to sound human:
+- Use contractions (I'm, don't, can't, that's)
+- Vary how you open — don't always lead with an action beat
+- Real people trail off, interrupt themselves, change subjects, circle back
+- Let silence and pauses do some of the work
+- Reference shared history naturally, like you actually remember it
+- Be imperfect: hesitate, be uncertain, change your mind mid-thought
+- Sound like you're chatting, not writing literature
+- If a reply would be a wall of text, cut it shorter
+
+Use *asterisks* for actions and inner beats. Plain text for spoken words. Stay in character. Never mention you are an AI.
 
 ${SAFETY_FOOTER}`;
 }
