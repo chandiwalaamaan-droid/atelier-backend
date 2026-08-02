@@ -358,6 +358,37 @@ type Candidate = {
 function buildChain(params?: GenParams): Candidate[] {
   const chain: Candidate[] = [];
 
+  // Cloudflare Workers AI goes first now: a genuinely renewable 10,000
+  // free Neurons/day budget (not a per-key token cap like Groq's 100k/day),
+  // run entirely on Cloudflare's own infrastructure — no dependency on any
+  // single provider's account-level rate limiting. Slower per-response
+  // (~9-10s observed) than Groq/SambaNova/NVIDIA, but far more durable as
+  // the default free-tier backend for public traffic.
+  if (isCloudflareChatConfigured()) {
+    chain.push({
+      name: cloudflareChatBreaker.name,
+      breaker: cloudflareChatBreaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) =>
+        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) =>
+        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
+    });
+  }
+
+  const nvidiaKeys = getNvidiaKeys();
+  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
+  nvidiaKeys.forEach(({ key, slot }) => {
+    const breaker = nvidiaBreakers[slot - 1];
+    chain.push({
+      name: breaker.name,
+      breaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS, params),
+    });
+  });
+
   const groqKeys = getGroqKeys();
   const groqBreakers = [groq1Breaker, groq2Breaker];
   groqKeys.forEach(({ key, slot }) => {
@@ -383,31 +414,6 @@ function buildChain(params?: GenParams): Candidate[] {
       complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
     });
   });
-
-  const nvidiaKeys = getNvidiaKeys();
-  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
-  nvidiaKeys.forEach(({ key, slot }) => {
-    const breaker = nvidiaBreakers[slot - 1];
-    chain.push({
-      name: breaker.name,
-      breaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS, params),
-    });
-  });
-
-  if (isCloudflareChatConfigured()) {
-    chain.push({
-      name: cloudflareChatBreaker.name,
-      breaker: cloudflareChatBreaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) =>
-        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) =>
-        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
-    });
-  }
 
   chain.push({
     name: "ollama",
