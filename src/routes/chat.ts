@@ -42,6 +42,7 @@ router.get("/:characterId", asyncHandler(async (req, res) => {
     orderBy: { createdAt: "asc" },
   });
 
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   return res.json({ character, messages });
 }));
 
