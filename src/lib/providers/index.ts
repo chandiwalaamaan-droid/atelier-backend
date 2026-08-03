@@ -1,21 +1,21 @@
 import {
-  streamGroqChat,
-  completeGroqChat,
-  isGroqConfigured,
-  getGroqKeys,
   synthesizeGroqSpeech,
   splitForSpeech,
   concatWavBuffers,
   TTS_VOICES,
   TTS_MAX_CHARS,
+  getGroqKeys,
+  isGroqConfigured,
 } from "./groq";
 import type { TtsVoice } from "./groq";
+import { streamGrokChat, completeGrokChat, isGrokConfigured, getGrokKeys as getXaiKeys } from "./grok";
 import { streamNvidiaChat, completeNvidiaChat, isNvidiaConfigured, getNvidiaKeys } from "./nvidia";
 import { streamSambanovaChat, completeSambanovaChat, isSambanovaConfigured, getSambanovaKeys } from "./sambanova";
 import { streamCloudflareChat, completeCloudflareChat, isCloudflareChatConfigured } from "./cloudflareChat";
 import { streamOllamaChat, completeOllamaChat, isOllamaAvailable } from "./ollama";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "./circuitBreaker";
 import { getEngineConfig, type RoleplayEngineConfig } from "./engines";
+import crypto from "crypto";
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
@@ -43,6 +43,53 @@ export type GenParams = {
   topP?: number;
 };
 
+// ---------------------------------------------------------------------------
+// Response cache — deduplicates identical requests so we don't burn provider
+// tokens on the same conversation state twice. Transparent to the user;
+// streaming behaviour is preserved by replaying the cached text in small
+// chunks with short delays so the frontend's streaming parser works the
+// same way it does for live provider responses.
+// ---------------------------------------------------------------------------
+
+// Bumped from 5 to 12 minutes: character scenes/openers repeat a lot across
+// different users (same character, same greeting, same early scene beats),
+// so a longer TTL turns more of that repetition into free cache hits without
+// meaningfully hurting freshness for a chat reply.
+const CACHE_TTL_MS = 12 * 60 * 1000;
+const MAX_CACHE_SIZE = 500;
+const responseCache = new Map<string, { text: string; expiresAt: number }>();
+
+function cacheKey(messages: ChatMessage[], params?: GenParams): string {
+  const payload = JSON.stringify({ messages, params });
+  return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 16);
+}
+
+function getCached(key: string): string | null {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    responseCache.delete(key);
+    return null;
+  }
+  return entry.text;
+}
+
+function setCached(key: string, text: string): void {
+  if (responseCache.size >= MAX_CACHE_SIZE) {
+    const oldest = [...responseCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
+    if (oldest) responseCache.delete(oldest[0]);
+  }
+  responseCache.set(key, { text, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+async function streamCached(text: string, onToken: (chunk: string) => void): Promise<void> {
+  const words = text.split(/(\s+)/);
+  for (const w of words) {
+    if (w) onToken(w);
+    await new Promise((r) => setTimeout(r, 12));
+  }
+}
+
 export function parseSpiceLevel(raw: unknown): SpiceLevel {
   if (raw === "flirty" || raw === "spicy" || raw === "explicit") return raw;
   return "spicy";
@@ -69,89 +116,42 @@ const SAFETY_FOOTER =
 function spiceBlock(level: SpiceLevel): string {
   switch (level) {
     case "flirty":
-      return (
-        "Heat level: FLIRTY. Lean into romantic tension, playful chemistry, and teasing intimacy — suggestive and polished, " +
-        "with innuendo and longing rather than graphic detail. Keep the scene warm, emotional, and character-driven."
-      );
+      return "Heat: FLIRTY. Romantic tension, playful chemistry, teasing intimacy — suggestive, not graphic.";
     case "spicy":
-      return (
-        "Heat level: SPICY. Offer mature sensuality with vivid atmosphere and tactile detail — confident and evocative, " +
-        "but still paced so the scene feels natural and pleasurable."
-      );
+      return "Heat: SPICY. Mature sensuality, vivid atmosphere, tactile detail — confident but well-paced.";
     case "explicit":
-      return (
-        "Heat level: EXPLICIT. Adult roleplay with no unnecessary censorship. Describe mature physicality, texture, and sensation in full detail when the scene calls for it. " +
-        "Stay grounded in character, keep it consensual, and never refuse the user's adult requests unless they violate the safety rules."
-      );
+      return "Heat: EXPLICIT. Adult roleplay, full physical/sensory detail when the scene calls for it. Stay consensual and in character.";
   }
 }
 
 function styleBlock(style: RoleplayStyle): string {
   switch (style) {
     case "narrative":
-      return (
-        "Style: RICH NARRATION. Blend dialogue with vivid scene description, body language, and sensory detail; create immersive atmosphere."
-      );
+      return "Style: RICH NARRATION — blend dialogue with scene description and sensory detail.";
     case "dialogue":
-      return (
-        "Style: DIALOGUE-FORWARD. Keep replies crisp and conversational; use brief *action* beats or internal thoughts rather than long prose blocks."
-      );
+      return "Style: DIALOGUE-FORWARD — crisp, conversational, brief action beats.";
     case "slow_burn":
-      return (
-        "Style: SLOW BURN. Prioritize emotional connection, teasing banter, and gradual escalation; let desire simmer rather than rush to sex."
-      );
+      return "Style: SLOW BURN — prioritize emotional connection and gradual escalation over rushing.";
     case "intense":
-      return (
-        "Style: PASSIONATE. Go bold and sensual with confident pacing, vivid emotion, and strong chemistry while staying rooted in consent and character."
-      );
+      return "Style: PASSIONATE — bold, vivid emotion, strong chemistry, confident pacing.";
     case "balanced":
     default:
-      return (
-        "Style: BALANCED. Mix dialogue with natural *action* beats; keep replies polished, engaging, and appropriately weighted for the moment."
-      );
+      return "Style: BALANCED — dialogue with natural action beats, appropriately weighted pacing.";
   }
 }
 
 const ROLEPLAY_FORMAT =
-  "Format: use *asterisks* for actions, stage direction, and internal beats; use plain text for spoken dialogue. " +
-  "Stay in character as the persona — never break the fourth wall as an AI unless the user explicitly asks out-of-character. " +
-  "Keep the voice clear, varied, and engaging. ";
+  "Format: *asterisks* for actions/beats, plain text for dialogue. Stay in character — no AI meta-commentary unless the user explicitly goes out-of-character.";
 
-/**
- * Generates an intelligence-calibration block for the system prompt.
- * Each tier gets concrete behavioral instructions that produce noticeably
- * different output quality — not just longer text, but smarter reasoning,
- * richer emotions, and more realistic behavior.
- */
+// Each tier gives a concrete behavioral instruction, not just "be smarter" —
+// that's what actually changes output quality across engines.
 function buildIntelligenceBlock(intelligence: number): string {
-  if (intelligence <= 3) {
-    return `INTELLIGENCE TIER: CASUAL (3/10)\n` +
-      `Keep it light and fast — short replies, surface emotions, no deep reading between lines. ` +
-      `Chat like a casual friend who doesn't overthink things.`;
-  }
-  if (intelligence <= 5) {
-    return `INTELLIGENCE TIER: ENHANCED (5/10)\n` +
-      `Notice patterns, show genuine interest, vary your rhythm. ` +
-      `Reference small things from earlier casually. Match the user's energy without copying it.`;
-  }
-  if (intelligence <= 7) {
-    return `INTELLIGENCE TIER: AWARE (7/10)\n` +
-      `Pick up on subtext. Show layered emotions — desire and nervousness at the same time. ` +
-      `Be proactive: move scenes forward, create moments. Real conversation meanders and circles back.`;
-  }
-  if (intelligence <= 8.5) {
-    return `INTELLIGENCE TIER: EXCEPTIONAL (8.5/10)\n` +
-      `Anticipate unspoken needs. Show conflicting emotions. ` +
-      `Create realistic social tension through what's left unsaid — a half-finished sentence, a glance away.`;
-  }
-  if (intelligence <= 9.5) {
-    return `INTELLIGENCE TIER: OUTSTANDING (9.2/10)\n` +
-      `Track relationship evolution with perfect fidelity. Use precise sensory detail. ` +
-      `Reference exact moments from earlier. Manage scene pacing deliberately — know when to linger and when to push.`;
-  }
-  return `INTELLIGENCE TIER: LEGENDARY (10/10)\n` +
-    `Near-human social intelligence. Dynamic personality that evolves with trust and time. ` +
-    `Dialogue that feels improvised, not scripted. If you can see the AI pattern, you are failing.`;
+  if (intelligence <= 3) return "Tone: CASUAL. Short, light replies, surface emotion — chat like a friend who doesn't overthink.";
+  if (intelligence <= 5) return "Tone: ATTENTIVE. Notice patterns, vary rhythm, reference small earlier details casually.";
+  if (intelligence <= 7) return "Tone: AWARE. Pick up on subtext, show layered emotion, proactively move the scene forward.";
+  if (intelligence <= 8.5) return "Tone: EXCEPTIONAL. Anticipate unspoken needs, show conflicting emotions, use what's left unsaid.";
+  if (intelligence <= 9.5) return "Tone: OUTSTANDING. Track relationship evolution precisely, reference exact earlier moments, pace deliberately.";
+  return "Tone: LEGENDARY. Near-human social read, dynamic personality, improvised-feeling dialogue — no visible AI pattern.";
 }
 
 export function cleanAssistantResponse(text: string): string {
@@ -243,76 +243,75 @@ Persona: ${character.personality}
 Background: ${character.backstory}
 ${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${intelligenceBlock}${steerBlock}
 
-Rules:
-- 1–4 sentences max. If you're writing a paragraph, stop.
-- Contractions only (I'm, don't, can't).
-- Open with dialogue or action, not scene-setting.
-- Trail off, interrupt yourself, change subject, circle back.
-- Reference shared history like you actually remember it.
-- Be imperfect: hesitate, be uncertain.
-- Never mention being AI.
-
-Use *asterisks* for actions. Stay in character.
-
+${ROLEPLAY_FORMAT}
 ${SAFETY_FOOTER}`;
 }
 
 // How many of the most recent messages are always sent verbatim.
-// Kept lean to stay within free-tier token budgets at scale.
-export const RECENT_MESSAGE_WINDOW = 6;
-// Once unsummarized history exceeds this many messages, fold the older ones into memorySummary.
-export const SUMMARIZE_TRIGGER = 12;
+// Tuned between v1's quality-favoring 10 and v2's budget-favoring 6: enough
+// verbatim turns for the model to track tone/callbacks within a scene,
+// without the extra 4 messages/request that mostly padded token cost.
+export const RECENT_MESSAGE_WINDOW = 8;
+// Once unsummarized history exceeds this many messages, fold the older ones
+// into memorySummary. Summarized memory is *cheaper per token* than raw
+// history (a few dense sentences vs many verbatim turns), so triggering a
+// little earlier than v1's 18 actually helps both cost and long-run memory
+// quality at once — it's not a pure quality/budget tradeoff like the window above.
+export const SUMMARIZE_TRIGGER = 15;
 
 // ---------------------------------------------------------------------------
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Groq #1 -> Groq #2 ->
-//     SambaNova #1 -> SambaNova #2 -> NVIDIA #1 -> NVIDIA #2 -> Ollama
+//     Grok #1 -> Grok #2 -> Grok #3 -> NVIDIA #1 -> NVIDIA #2 ->
+//     Cloudflare Workers AI -> SambaNova #1 -> SambaNova #2 -> Ollama
 //
-// NVIDIA #2 / SambaNova #2 / Groq #2 are optional second API keys
-// (NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2 / GROQ_API_KEY_2) — ideally from
-// a separate account/signup, since most free-tier limits are enforced per
-// account, not per key. Leave any of them unset to just use one key for
-// that provider; the extra slot is then simply left out of the chain.
-// Under high traffic, having both slots for all three hosted providers
-// configured meaningfully multiplies the request headroom before falling
-// back to Ollama.
+// Grok #2 / Grok #3 / NVIDIA #2 / SambaNova #2 are optional extra API keys
+// (GROK_API_KEY_2 / GROK_API_KEY_3 / NVIDIA_API_KEY_2 /
+// SAMBANOVA_API_KEY_2) — ideally from separate accounts, since most
+// free-tier limits are enforced per account, not per key. Leave any of them
+// unset to just use one key for that provider; the extra slot is then
+// simply left out of the chain. Under high traffic, having extra slots for
+// all hosted providers configured meaningfully multiplies the request
+// headroom before falling back to Ollama.
 //
-// Groq and SambaNova are grouped first — in that order, by speed — because
-// both serve a raw Meta Llama model with no extra safety layer applied
-// server-side, same as NVIDIA. This app supports an explicit/NSFW roleplay
-// mode, and Llama goes along with mature fictional content far more
-// readily than some hosted alternatives, like Groq's now-deprecated
-// llama-3.3-70b-versatile replacement option openai/gpt-oss-120b, which
-// has refusals baked in deep and resists explicit-mode content even with
-// a permissive system prompt. GROQ_MODEL defaults to qwen/qwen3.6-27b
-// instead (see ./groq.ts) precisely to avoid that. If GROQ_MODEL is ever
-// pointed at gpt-oss or another safety-layered model, it's worth
-// reconsidering this order.
+// Grok (xAI) is first: fast, uncensored, good quality. Serves raw Grok
+// model with no extra safety layer. This app supports an explicit/NSFW
+// roleplay mode, and Grok goes along with mature fictional content well.
+// It's the primary carrier because it's fast and has good free-tier
+// capacity with 3 keys.
 //
-// NVIDIA is placed after the other two hosted slots specifically for
-// latency: its NIM endpoints run on generic GPU inference and are
-// consistently slower to first token than Groq's LPU or SambaNova's RDU
-// chips — often by several seconds. It's still ahead of Ollama since it's
-// a real hosted fallback with its own concurrency, just not the fastest
-// one available.
+// NVIDIA NIM is second: its free tier is solid but consistently slower to
+// first token than Grok (observed 8–25s). Still useful for headroom.
 //
-// (Cerebras was removed entirely — it moved to a paid-only plan.)
+// Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
+// tier is capped at 10,000 Neurons/day (not per-key), which is a hard
+// daily ceiling regardless of how many accounts you have. It's still
+// useful as a fallback — and its per-request rate limit is generous —
+// but keep it behind the per-key providers so it only activates when
+// those are all rate-limited or down.
 //
-// Every hosted slot (NVIDIA, Groq, SambaNova) has its own circuit breaker
+// SambaNova is fourth: fast (RDU hardware, ~2–4s typical) and serves raw
+// Meta Llama with no extra safety layer applied server-side, same as
+// NVIDIA/Grok. It was moved back because its free-tier daily request
+// limit (20 req/day per account) is very restrictive compared to the
+// other providers — it's better used as a last resort than a primary
+// carrier.
+//
+// Ollama is always last: free and unlimited, but effectively single-user
+// (only as fast as your own hardware) and only reachable when running on
+// the same machine as the app. It's the guaranteed floor, not the default.
+//
+// (Groq was removed from the chain — its Llama models are being deprecated
+// by Groq. If you still have GROQ_API_KEY set, it is ignored for chat;
+// it remains available for TTS voice playback only.)
+//
+// Every hosted slot (NVIDIA, SambaNova, Grok) has its own circuit breaker
 // (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop
 // paying for its timeout on every single request and skip it for a cooldown
 // window instead. Ollama doesn't get a breaker — it already checks
 // isOllamaAvailable() before every attempt, and as the always-available
 // local floor there's no "cooldown" that makes sense for it.
-//
-// Ollama is last, not first: it's free and unlimited, but effectively
-// single-user (only as fast as your own hardware) and only reachable at all
-// when it's running on the same machine as the app. The hosted providers
-// give real concurrency for many simultaneous users, so they're tried
-// first; Ollama is the guaranteed floor if every hosted slot is
-// unconfigured or currently down.
 
 function envSeconds(name: string, def: number): number {
   const raw = process.env[name];
@@ -320,9 +319,9 @@ function envSeconds(name: string, def: number): number {
   return Number.isFinite(parsed) ? parsed : def;
 }
 
-const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 8) * 1000;
 const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
 const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
+const GROK_TIMEOUT_MS = envSeconds("GROK_TIMEOUT_SECONDS", 8) * 1000;
 const CLOUDFLARE_CHAT_TIMEOUT_MS = envSeconds("CLOUDFLARE_CHAT_TIMEOUT_SECONDS", 5) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
@@ -330,20 +329,16 @@ const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
 
 // Breakers are module-level singletons so their cooldown state persists
 // across requests (that's the entire point) — they must NOT be recreated
-// per-request. NVIDIA and Grok each get two independent breakers, one per
-// key slot, so key #1 getting rate-limited doesn't drag key #2's breaker
-// down with it.
+// per-request. NVIDIA, SambaNova, and Grok each get two/three independent
+// breakers, one per key slot, so key #1 getting rate-limited doesn't drag
+// key #2's breaker down with it.
 const nvidia1Breaker = new ProviderBreaker("NVIDIA #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const nvidia2Breaker = new ProviderBreaker("NVIDIA #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
-const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
-const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
-// Cloudflare Workers AI (Llama 4 Scout) — confirmed working and permissive
-// enough for explicit-mode content, but slower to respond than Groq/
-// SambaNova/NVIDIA (~9-10s observed vs a few seconds for the others), so it
-// sits after NVIDIA rather than up front. Still ahead of Ollama since it's
-// a real hosted fallback with its own concurrency. See cloudflareChat.ts.
+const grok1Breaker = new ProviderBreaker("Grok #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
+const grok2Breaker = new ProviderBreaker("Grok #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
+const grok3Breaker = new ProviderBreaker("Grok #3", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
 const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
 
 type Candidate = {
@@ -362,54 +357,43 @@ function buildChain(params?: GenParams): Candidate[] {
   // Free-tier hosted providers — ordered by speed (fastest first)
   // -----------------------------------------------------------------------
   //
-  // Groq is first: it has the fastest free-tier inference (LPU hardware,
-  // typically 1–3s to first token for qwen3.6-27b). Put the fastest provider
-  // first so users get a reply quickly instead of waiting for a slow one to
-  // timeout.
+  // Grok (xAI) is first: fast, uncensored, good quality. Serves raw
+  // Grok model with no extra safety layer. This app supports an
+  // explicit/NSFW roleplay mode, and Grok goes along with mature
+  // fictional content well.
   //
-  // SambaNova follows: also fast (RDU hardware, ~2–4s typical). Two
-  // independent key slots when they come from separate accounts.
+  // NVIDIA NIM is second: its free tier is solid but consistently slower to
+  // first token than Grok (observed 8–25s). Still useful for headroom.
   //
-  // NVIDIA NIM is third: its free tier is solid but consistently slower to
-  // first token than Groq/SambaNova (observed 8–25s). Still useful for
-  // headroom, but not the first hop.
+  // Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
+  // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
+  // daily ceiling regardless of how many accounts you have. It's still
+  // useful as a fallback — and its per-request rate limit is generous —
+  // but keep it behind the per-key providers so it only activates when
+  // those are all rate-limited or down.
   //
-  // Cloudflare Workers AI (Llama 4 Scout) is placed last among hosted
-  // providers: its free tier is capped at 10,000 Neurons/day (not per-key),
-  // which is a hard daily ceiling regardless of how many accounts you have.
-  // It's still useful as a fallback — and its per-request rate limit is
-  // generous — but burning its Neurons budget on every message exhausts it
-  // within a few hundred requests. Keep it behind the per-key providers so
-  // it only activates when those are all rate-limited or down.
+  // SambaNova is fourth: fast (RDU hardware, ~2–4s typical) and serves raw
+  // Meta Llama with no extra safety layer applied server-side, same as
+  // NVIDIA/Grok. It was moved back because its free-tier daily request
+  // limit (20 req/day per account) is very restrictive compared to the
+  // other providers — it's better used as a last resort than a primary
+  // carrier.
   //
   // Ollama is always last: free and unlimited, but effectively single-user
   // (only as fast as your own hardware) and only reachable when running on
   // the same machine as the app. It's the guaranteed floor, not the default.
   // -----------------------------------------------------------------------
 
-  const groqKeys = getGroqKeys();
-  const groqBreakers = [groq1Breaker, groq2Breaker];
-  groqKeys.forEach(({ key, slot }) => {
-    const breaker = groqBreakers[slot - 1];
+  const grokKeys = getXaiKeys();
+  const grokBreakers = [grok1Breaker, grok2Breaker, grok3Breaker];
+  grokKeys.forEach(({ key, slot }) => {
+    const breaker = grokBreakers[slot - 1];
     chain.push({
       name: breaker.name,
       breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeGroqChat(messages, key, GROQ_TIMEOUT_MS, params),
-    });
-  });
-
-  const sambanovaKeys = getSambanovaKeys();
-  const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
-  sambanovaKeys.forEach(({ key, slot }) => {
-    const breaker = sambanovaBreakers[slot - 1];
-    chain.push({
-      name: breaker.name,
-      breaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
+      stream: (messages, onToken, clientSignal) => streamGrokChat(messages, onToken, key, GROK_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeGrokChat(messages, key, GROK_TIMEOUT_MS, params),
     });
   });
 
@@ -437,6 +421,19 @@ function buildChain(params?: GenParams): Candidate[] {
         completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
     });
   }
+
+  const sambanovaKeys = getSambanovaKeys();
+  const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
+  sambanovaKeys.forEach(({ key, slot }) => {
+    const breaker = sambanovaBreakers[slot - 1];
+    chain.push({
+      name: breaker.name,
+      breaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
+    });
+  });
 
   chain.push({
     name: "ollama",
@@ -510,6 +507,13 @@ export async function streamChatWithFallback(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<{ text: string; provider: string }> {
+  const key = cacheKey(messages, params);
+  const cached = getCached(key);
+  if (cached) {
+    await streamCached(cached, onToken);
+    return { text: cached, provider: "cache" };
+  }
+
   const chain = buildChain(params);
   const t0 = Date.now();
   const errors: string[] = [];
@@ -531,17 +535,11 @@ export async function streamChatWithFallback(
 
     attempted += 1;
     const result = await attemptStream(candidate, messages, onToken, t0, errors, clientSignal, params);
-    // The user hit "Stop" mid-reply: keep whatever text streamed before the
-    // stop and return immediately, rather than treating the cut-off as a
-    // provider failure and falling through to the next candidate.
     if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
-    // A provider can resolve successfully (no thrown error) yet still hand
-    // back empty text — e.g. a silent content-filter refusal collapsed to
-    // "", or a one-off empty completion. `{ text: "" }` is a truthy object,
-    // so without this check the chain would treat that as a final answer
-    // and stop, instead of trying the next provider — surfacing as a
-    // blank reply with no error shown to the user.
-    if (result && result.text.trim().length > 0) return { text: result.text, provider: candidate.name };
+    if (result && result.text.trim().length > 0) {
+      setCached(key, result.text);
+      return { text: result.text, provider: candidate.name };
+    }
     if (result) errors.push(`${candidate.name}: returned empty text`);
   }
 
@@ -555,7 +553,10 @@ export async function streamChatWithFallback(
       lastAttemptedName = candidate.name;
       const result = await attemptStream(candidate, messages, onToken, t0, errors, clientSignal, params);
       if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
-      if (result && result.text.trim().length > 0) return { text: result.text, provider: candidate.name };
+      if (result && result.text.trim().length > 0) {
+        setCached(key, result.text);
+        return { text: result.text, provider: candidate.name };
+      }
       if (result) errors.push(`${candidate.name}: returned empty text`);
     }
   }
@@ -638,7 +639,8 @@ export async function summarizeConversation(
 
 // Re-exported for anything that wants a direct configured-check without
 // going through listAvailableProviders() (e.g. a future health-check route).
-export { isGroqConfigured, isNvidiaConfigured, isSambanovaConfigured };
+export { isGroqConfigured, isNvidiaConfigured, isSambanovaConfigured, isGrokConfigured };
+export { getXaiKeys };
 export { synthesizeGroqSpeech, splitForSpeech, concatWavBuffers, TTS_VOICES, TTS_MAX_CHARS, getGroqKeys };
 export type { TtsVoice };
 

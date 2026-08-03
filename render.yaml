@@ -18,12 +18,13 @@ services:
       # from Google Cloud Console > APIs & Services > Credentials. Add both
       # https://<your-netlify-site>.netlify.app AND this backend's Render
       # URL under "Authorized JavaScript origins" on that same credential.
-      # No client secret needed — this only verifies ID tokens.
+      # If you have a separate mobile web origin, add that too. No client
+      # secret needed — this only verifies ID tokens.
       - key: GOOGLE_CLIENT_ID
         sync: false
       # Set this to your Netlify site URL(s) after the frontend is deployed,
-      # comma-separated if you have more than one (prod + deploy previews).
-      # e.g. "https://your-site.netlify.app"
+      # comma-separated if you have more than one (prod + deploy previews +
+      # mobile web origin). e.g. "https://your-site.netlify.app,https://m.your-site.netlify.app"
       - key: FRONTEND_URL
         sync: false
       # Avatar hosting (uploaded + AI-generated images). Free account at
@@ -52,6 +53,9 @@ services:
         sync: false
       - key: GROQ_API_KEY_2
         sync: false
+      # GROQ_MODEL is ignored for chat (Groq removed from chat fallback chain
+      # because its Llama models are deprecated). Kept here in case Groq chat
+      # is re-enabled in the future; currently only used for TTS voice playback.
       - key: GROQ_MODEL
         value: "qwen/qwen3.6-27b"
       - key: NVIDIA_API_KEY
@@ -59,7 +63,15 @@ services:
       - key: NVIDIA_API_KEY_2
         sync: false
       - key: NVIDIA_MODEL
-        value: "meta/llama-3.1-70b-instruct"
+        value: "meta/llama-3.3-70b-instruct"
+      - key: GROK_API_KEY
+        sync: false
+      - key: GROK_API_KEY_2
+        sync: false
+      - key: GROK_API_KEY_3
+        sync: false
+      - key: GROK_MODEL
+        value: "grok-4-0709"
       - key: SAMBANOVA_API_KEY
         sync: false
       - key: SAMBANOVA_API_KEY_2

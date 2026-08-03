@@ -150,6 +150,7 @@ router.post("/register", asyncHandler(async (req, res) => {
     email: user.email,
     displayName: user.displayName,
     emailVerified: user.emailVerified,
+    token,
   });
 }));
 
@@ -219,6 +220,7 @@ router.post("/google", asyncHandler(async (req, res) => {
     email: user.email,
     displayName: user.displayName,
     emailVerified: user.emailVerified,
+    token,
   });
 }));
 
@@ -314,6 +316,7 @@ router.post("/google/complete", asyncHandler(async (req, res) => {
     email: user.email,
     displayName: user.displayName,
     emailVerified: user.emailVerified,
+    token,
   });
 }));
 
@@ -346,7 +349,7 @@ router.post("/login", asyncHandler(async (req, res) => {
   const token = await createSessionToken(user.id);
   setSessionCookie(res, token);
 
-  return res.json({ id: user.id, email: user.email, displayName: user.displayName });
+  return res.json({ id: user.id, email: user.email, displayName: user.displayName, token });
 }));
 
 router.post("/logout", asyncHandler(async (_req, res) => {

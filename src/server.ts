@@ -27,6 +27,11 @@ function validateEnv() {
     console.warn("WARNING: FRONTEND_URL is not set. CORS may block frontend requests in production.");
   }
 
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  if (!GOOGLE_CLIENT_ID) {
+    console.warn("WARNING: GOOGLE_CLIENT_ID is not set. Google Sign-In will not work.");
+  }
+
   const PORT = Number(process.env.PORT || 4000);
   if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
     console.error(`Invalid PORT: ${process.env.PORT}. Must be a number between 1 and 65535.`);

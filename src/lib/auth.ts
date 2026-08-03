@@ -70,15 +70,11 @@ export function clearSessionCookie(res: Response) {
 }
 
 export async function getCurrentUserId(req: Request): Promise<string | null> {
-  const token = req.cookies?.[COOKIE_NAME];
+  const token = getTokenFromRequest(req);
   if (!token) return null;
   const session = await verifySessionToken(token);
   if (!session?.userId) return null;
 
-  // A session JWT can outlive the account it points to — it's valid for 30
-  // days, but the retention job (src/jobs/retentionCleanup.ts) can anonymize
-  // an account at any point in that window. Treat an anonymized/deleted
-  // account as "not logged in" rather than trusting the token alone.
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
     select: { deletedAt: true },
@@ -87,4 +83,14 @@ export async function getCurrentUserId(req: Request): Promise<string | null> {
 
   touchActivity(session.userId);
   return session.userId;
+}
+
+function getTokenFromRequest(req: Request): string | null {
+  const cookieToken = req.cookies?.[COOKIE_NAME];
+  if (typeof cookieToken === "string" && cookieToken) return cookieToken;
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  return null;
 }

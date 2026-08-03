@@ -3,10 +3,10 @@
  *
  * Ported from the same pattern used in the ATS Resume Checker backend's
  * ai_client.py (ProviderBreaker there). The problem it solves: without it,
- * every chat request re-tries Groq first even if Groq was rate-limited two
- * seconds ago — so a busy period means every single message pays Groq's
- * full timeout before falling through to NVIDIA/Ollama. That's slow for
- * users and wastes the fallback chain's whole point.
+ * every chat request re-tries the first provider even if it was rate-limited
+ * two seconds ago — so a busy period means every single message pays that
+ * provider's full timeout before falling through to the next one. That's
+ * slow for users and wastes the fallback chain's whole point.
  *
  * With a breaker: the first 429 (or a couple of back-to-back timeouts)
  * "opens" that provider's breaker for a cooldown window. Requests that land
@@ -14,8 +14,8 @@
  * zero latency paid on a provider we already know is down. The cooldown
  * clears itself automatically; no restart needed.
  *
- * Each provider (and each API-key slot, if you configure a second Groq or
- * NVIDIA key) gets its own independent breaker instance.
+ * Each provider (and each API-key slot, if you configure a second key) gets
+ * its own independent breaker instance.
  */
 
 const RETRY_HINT_RE = /retry in\s+([\d.]+)\s*s/i;
