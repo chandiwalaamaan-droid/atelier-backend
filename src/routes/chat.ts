@@ -109,7 +109,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   if (available.length === 0) {
     return res.status(502).json({
       error:
-        "No chat provider is available. Add a GROK_API_KEY, NVIDIA_API_KEY, or SAMBANOVA_API_KEY to .env, or make sure " +
+        "No chat provider is available. Add a CEREBRAS_API_KEY, NVIDIA_API_KEY, or SAMBANOVA_API_KEY to .env, or make sure " +
         "Ollama is installed and running locally (see README), then try again.",
     });
   }

@@ -8,9 +8,9 @@ import {
   isGroqConfigured,
 } from "./groq";
 import type { TtsVoice } from "./groq";
-import { streamGrokChat, completeGrokChat, isGrokConfigured, getGrokKeys as getXaiKeys } from "./grok";
 import { streamNvidiaChat, completeNvidiaChat, isNvidiaConfigured, getNvidiaKeys } from "./nvidia";
 import { streamSambanovaChat, completeSambanovaChat, isSambanovaConfigured, getSambanovaKeys } from "./sambanova";
+import { streamCerebrasChat, completeCerebrasChat, isCerebrasConfigured, getCerebrasKeys } from "./cerebras";
 import { streamCloudflareChat, completeCloudflareChat, isCloudflareChatConfigured } from "./cloudflareChat";
 import { streamOllamaChat, completeOllamaChat, isOllamaAvailable } from "./ollama";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "./circuitBreaker";
@@ -263,26 +263,35 @@ export const SUMMARIZE_TRIGGER = 15;
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Grok #1 -> Grok #2 -> Grok #3 -> NVIDIA #1 -> NVIDIA #2 ->
-//     Cloudflare Workers AI -> SambaNova #1 -> SambaNova #2 -> Ollama
+//     Cerebras #1 -> Cerebras #2 -> SambaNova #1 -> SambaNova #2 ->
+//     NVIDIA #1 -> NVIDIA #2 -> Cloudflare Workers AI -> Ollama
 //
-// Grok #2 / Grok #3 / NVIDIA #2 / SambaNova #2 are optional extra API keys
-// (GROK_API_KEY_2 / GROK_API_KEY_3 / NVIDIA_API_KEY_2 /
-// SAMBANOVA_API_KEY_2) — ideally from separate accounts, since most
-// free-tier limits are enforced per account, not per key. Leave any of them
-// unset to just use one key for that provider; the extra slot is then
-// simply left out of the chain. Under high traffic, having extra slots for
-// all hosted providers configured meaningfully multiplies the request
-// headroom before falling back to Ollama.
+// Cerebras #2 / NVIDIA #2 / SambaNova #2 are optional extra API keys
+// (CEREBRAS_API_KEY_2 / NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2) — ideally
+// from separate accounts, since most free-tier limits are enforced per
+// account, not per key. Leave any of them unset to just use one key for
+// that provider; the extra slot is then simply left out of the chain.
+// Under high traffic, having extra slots for all hosted providers
+// configured meaningfully multiplies the request headroom before falling
+// back to Ollama.
 //
-// Grok (xAI) is first: fast, uncensored, good quality. Serves raw Grok
-// model with no extra safety layer. This app supports an explicit/NSFW
-// roleplay mode, and Grok goes along with mature fictional content well.
-// It's the primary carrier because it's fast and has good free-tier
-// capacity with 3 keys.
+// Cerebras is first: offers 1M tokens/day free (no credit card), with
+// gpt-oss-120b running at ~3000 tokens/sec. Despite only 5 RPM, it's
+// kept first for testing because it's the most reliable free-tier
+// provider with the highest daily volume and no credit card required.
+// gpt-oss-120b is uncensored and best for roleplay/explicit content.
 //
-// NVIDIA NIM is second: its free tier is solid but consistently slower to
-// first token than Grok (observed 8–25s). Still useful for headroom.
+// SambaNova is second: fast (RDU hardware, ~2–4s typical) and serves raw
+// Meta Llama with no extra safety layer applied server-side, same as
+// NVIDIA/Cerebras. This app supports an explicit/NSFW roleplay mode, and
+// Llama goes along with mature fictional content far more readily than
+// some hosted alternatives. Despite its restrictive 20 req/day free-tier
+// limit, it's kept second because it's the fastest and best quality for
+// the few requests it can handle.
+//
+// NVIDIA NIM is third: its free tier is solid but consistently slower to
+// first token than SambaNova/Cerebras (observed 8–25s). Still useful for
+// headroom.
 //
 // Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
 // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
@@ -291,22 +300,17 @@ export const SUMMARIZE_TRIGGER = 15;
 // but keep it behind the per-key providers so it only activates when
 // those are all rate-limited or down.
 //
-// SambaNova is fourth: fast (RDU hardware, ~2–4s typical) and serves raw
-// Meta Llama with no extra safety layer applied server-side, same as
-// NVIDIA/Grok. It was moved back because its free-tier daily request
-// limit (20 req/day per account) is very restrictive compared to the
-// other providers — it's better used as a last resort than a primary
-// carrier.
-//
 // Ollama is always last: free and unlimited, but effectively single-user
 // (only as fast as your own hardware) and only reachable when running on
 // the same machine as the app. It's the guaranteed floor, not the default.
 //
 // (Groq was removed from the chain — its Llama models are being deprecated
 // by Groq. If you still have GROQ_API_KEY set, it is ignored for chat;
-// it remains available for TTS voice playback only.)
+// it remains available for TTS voice playback only. Grok/xAI is also not
+// in this chain because its free tier requires a credit card and paid
+// credits.)
 //
-// Every hosted slot (NVIDIA, SambaNova, Grok) has its own circuit breaker
+// Every hosted slot (NVIDIA, SambaNova, Cerebras) has its own circuit breaker
 // (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop
 // paying for its timeout on every single request and skip it for a cooldown
 // window instead. Ollama doesn't get a breaker — it already checks
@@ -321,7 +325,7 @@ function envSeconds(name: string, def: number): number {
 
 const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
 const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
-const GROK_TIMEOUT_MS = envSeconds("GROK_TIMEOUT_SECONDS", 8) * 1000;
+const CEREBRAS_TIMEOUT_MS = envSeconds("CEREBRAS_TIMEOUT_SECONDS", 8) * 1000;
 const CLOUDFLARE_CHAT_TIMEOUT_MS = envSeconds("CLOUDFLARE_CHAT_TIMEOUT_SECONDS", 5) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
@@ -329,16 +333,15 @@ const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
 
 // Breakers are module-level singletons so their cooldown state persists
 // across requests (that's the entire point) — they must NOT be recreated
-// per-request. NVIDIA, SambaNova, and Grok each get two/three independent
+// per-request. NVIDIA, SambaNova, and Cerebras each get two independent
 // breakers, one per key slot, so key #1 getting rate-limited doesn't drag
 // key #2's breaker down with it.
 const nvidia1Breaker = new ProviderBreaker("NVIDIA #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const nvidia2Breaker = new ProviderBreaker("NVIDIA #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
-const grok1Breaker = new ProviderBreaker("Grok #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
-const grok2Breaker = new ProviderBreaker("Grok #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
-const grok3Breaker = new ProviderBreaker("Grok #3", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROK");
+const cerebras1Breaker = new ProviderBreaker("Cerebras #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CEREBRAS");
+const cerebras2Breaker = new ProviderBreaker("Cerebras #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CEREBRAS");
 const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
 
 type Candidate = {
@@ -357,13 +360,23 @@ function buildChain(params?: GenParams): Candidate[] {
   // Free-tier hosted providers — ordered by speed (fastest first)
   // -----------------------------------------------------------------------
   //
-  // Grok (xAI) is first: fast, uncensored, good quality. Serves raw
-  // Grok model with no extra safety layer. This app supports an
-  // explicit/NSFW roleplay mode, and Grok goes along with mature
-  // fictional content well.
+  // Cerebras is first: offers 1M tokens/day free (no credit card), with
+  // gpt-oss-120b running at ~3000 tokens/sec. Despite only 5 RPM, it's
+  // kept first for testing because it's the most reliable free-tier
+  // provider with the highest daily volume and no credit card required.
+  // gpt-oss-120b is uncensored and best for roleplay/explicit content.
   //
-  // NVIDIA NIM is second: its free tier is solid but consistently slower to
-  // first token than Grok (observed 8–25s). Still useful for headroom.
+  // SambaNova is second: fast (RDU hardware, ~2–4s typical) and serves raw
+  // Meta Llama with no extra safety layer applied server-side, same as
+  // NVIDIA/Cerebras. This app supports an explicit/NSFW roleplay mode, and
+  // Llama goes along with mature fictional content far more readily than
+  // some hosted alternatives. Despite its restrictive 20 req/day free-tier
+  // limit, it's kept second because it's the fastest and best quality for
+  // the few requests it can handle.
+  //
+  // NVIDIA NIM is third: its free tier is solid but consistently slower to
+  // first token than SambaNova/Cerebras (observed 8–25s). Still useful for
+  // headroom.
   //
   // Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
   // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
@@ -372,28 +385,34 @@ function buildChain(params?: GenParams): Candidate[] {
   // but keep it behind the per-key providers so it only activates when
   // those are all rate-limited or down.
   //
-  // SambaNova is fourth: fast (RDU hardware, ~2–4s typical) and serves raw
-  // Meta Llama with no extra safety layer applied server-side, same as
-  // NVIDIA/Grok. It was moved back because its free-tier daily request
-  // limit (20 req/day per account) is very restrictive compared to the
-  // other providers — it's better used as a last resort than a primary
-  // carrier.
-  //
   // Ollama is always last: free and unlimited, but effectively single-user
   // (only as fast as your own hardware) and only reachable when running on
   // the same machine as the app. It's the guaranteed floor, not the default.
   // -----------------------------------------------------------------------
 
-  const grokKeys = getXaiKeys();
-  const grokBreakers = [grok1Breaker, grok2Breaker, grok3Breaker];
-  grokKeys.forEach(({ key, slot }) => {
-    const breaker = grokBreakers[slot - 1];
+  const cerebrasKeys = getCerebrasKeys();
+  const cerebrasBreakers = [cerebras1Breaker, cerebras2Breaker];
+  cerebrasKeys.forEach(({ key, slot }) => {
+    const breaker = cerebrasBreakers[slot - 1];
     chain.push({
       name: breaker.name,
       breaker,
       isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamGrokChat(messages, onToken, key, GROK_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeGrokChat(messages, key, GROK_TIMEOUT_MS, params),
+      stream: (messages, onToken, clientSignal) => streamCerebrasChat(messages, onToken, key, CEREBRAS_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeCerebrasChat(messages, key, CEREBRAS_TIMEOUT_MS, params),
+    });
+  });
+
+  const sambanovaKeys = getSambanovaKeys();
+  const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
+  sambanovaKeys.forEach(({ key, slot }) => {
+    const breaker = sambanovaBreakers[slot - 1];
+    chain.push({
+      name: breaker.name,
+      breaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
     });
   });
 
@@ -421,19 +440,6 @@ function buildChain(params?: GenParams): Candidate[] {
         completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
     });
   }
-
-  const sambanovaKeys = getSambanovaKeys();
-  const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
-  sambanovaKeys.forEach(({ key, slot }) => {
-    const breaker = sambanovaBreakers[slot - 1];
-    chain.push({
-      name: breaker.name,
-      breaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
-    });
-  });
 
   chain.push({
     name: "ollama",
@@ -639,8 +645,8 @@ export async function summarizeConversation(
 
 // Re-exported for anything that wants a direct configured-check without
 // going through listAvailableProviders() (e.g. a future health-check route).
-export { isGroqConfigured, isNvidiaConfigured, isSambanovaConfigured, isGrokConfigured };
-export { getXaiKeys };
+export { isGroqConfigured, isNvidiaConfigured, isSambanovaConfigured, isCerebrasConfigured };
+export { getCerebrasKeys };
 export { synthesizeGroqSpeech, splitForSpeech, concatWavBuffers, TTS_VOICES, TTS_MAX_CHARS, getGroqKeys };
 export type { TtsVoice };
 

@@ -58,20 +58,18 @@ services:
       # is re-enabled in the future; currently only used for TTS voice playback.
       - key: GROQ_MODEL
         value: "qwen/qwen3.6-27b"
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY_2
+        sync: false
+      - key: CEREBRAS_MODEL
+        value: "gpt-oss-120b"
       - key: NVIDIA_API_KEY
         sync: false
       - key: NVIDIA_API_KEY_2
         sync: false
       - key: NVIDIA_MODEL
         value: "meta/llama-3.3-70b-instruct"
-      - key: GROK_API_KEY
-        sync: false
-      - key: GROK_API_KEY_2
-        sync: false
-      - key: GROK_API_KEY_3
-        sync: false
-      - key: GROK_MODEL
-        value: "grok-4-0709"
       - key: SAMBANOVA_API_KEY
         sync: false
       - key: SAMBANOVA_API_KEY_2

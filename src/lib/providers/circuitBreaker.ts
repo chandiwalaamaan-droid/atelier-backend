@@ -96,7 +96,10 @@ export function isRateLimitError(error: unknown): boolean {
     message.includes("quota") ||
     message.includes("rate limit") ||
     message.includes("resource_exhausted") ||
-    message.includes("too_many_requests")
+    message.includes("too_many_requests") ||
+    message.includes("permission-denied") ||
+    message.includes("no credits") ||
+    message.includes("no licenses")
   );
 }
 
