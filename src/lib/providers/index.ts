@@ -258,10 +258,10 @@ ${SAFETY_FOOTER}`;
 }
 
 // How many of the most recent messages are always sent verbatim.
-// Lowered to improve latency and keep the prompt lean.
-export const RECENT_MESSAGE_WINDOW = 10;
+// Kept lean to stay within free-tier token budgets at scale.
+export const RECENT_MESSAGE_WINDOW = 6;
 // Once unsummarized history exceeds this many messages, fold the older ones into memorySummary.
-export const SUMMARIZE_TRIGGER = 18;
+export const SUMMARIZE_TRIGGER = 12;
 
 // ---------------------------------------------------------------------------
 // Fallback chain
@@ -323,7 +323,7 @@ function envSeconds(name: string, def: number): number {
 const GROQ_TIMEOUT_MS = envSeconds("GROQ_TIMEOUT_SECONDS", 8) * 1000;
 const NVIDIA_TIMEOUT_MS = envSeconds("NVIDIA_TIMEOUT_SECONDS", 8) * 1000;
 const SAMBANOVA_TIMEOUT_MS = envSeconds("SAMBANOVA_TIMEOUT_SECONDS", 8) * 1000;
-const CLOUDFLARE_CHAT_TIMEOUT_MS = envSeconds("CLOUDFLARE_CHAT_TIMEOUT_SECONDS", 8) * 1000;
+const CLOUDFLARE_CHAT_TIMEOUT_MS = envSeconds("CLOUDFLARE_CHAT_TIMEOUT_SECONDS", 5) * 1000;
 // Local generation can legitimately take longer to get going on modest
 // hardware, so Ollama gets a more generous default than the hosted slots.
 const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
@@ -358,23 +358,33 @@ type Candidate = {
 function buildChain(params?: GenParams): Candidate[] {
   const chain: Candidate[] = [];
 
-  // Cloudflare Workers AI goes first now: a genuinely renewable 10,000
-  // free Neurons/day budget (not a per-key token cap like Groq's 100k/day),
-  // run entirely on Cloudflare's own infrastructure — no dependency on any
-  // single provider's account-level rate limiting. Slower per-response
-  // (~9-10s observed) than Groq/SambaNova/NVIDIA, but far more durable as
-  // the default free-tier backend for public traffic.
-  if (isCloudflareChatConfigured()) {
-    chain.push({
-      name: cloudflareChatBreaker.name,
-      breaker: cloudflareChatBreaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) =>
-        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) =>
-        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
-    });
-  }
+  // -----------------------------------------------------------------------
+  // Free-tier hosted providers — ordered by free-tier headroom and speed
+  // -----------------------------------------------------------------------
+  //
+  // Groq is first: it offers the highest free-tier throughput (100k tokens/day
+  // per account, plus generous RPM/RPM limits), and qwen3.6-27b is fast and
+  // permissive enough for explicit-mode roleplay. Two independent key slots
+  // double the effective ceiling when they come from separate accounts.
+  //
+  // NVIDIA NIM and SambaNova follow: both have solid free tiers with their
+  // own rate limits. NVIDIA is placed before SambaNova purely for latency —
+  // NIM endpoints are consistently faster to first token than SambaNova's
+  // equivalent. Both get two independent key slots.
+  //
+  // Cloudflare Workers AI (Llama 4 Scout) is placed last among hosted
+  // providers: its free tier is capped at 10,000 Neurons/day (not per-key),
+  // which is a hard daily ceiling regardless of how many accounts you have.
+  // It's still useful as a fallback — and its per-request rate limit is
+  // generous — but burning its Neurons budget on every message (as would
+  // happen if it were first in the chain) exhausts it within a few hundred
+  // requests. Keep it behind the per-key providers so it only activates when
+  // those are all rate-limited or down.
+  //
+  // Ollama is always last: free and unlimited, but effectively single-user
+  // (only as fast as your own hardware) and only reachable when running on
+  // the same machine as the app. It's the guaranteed floor, not the default.
+  // -----------------------------------------------------------------------
 
   const nvidiaKeys = getNvidiaKeys();
   const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
@@ -414,6 +424,18 @@ function buildChain(params?: GenParams): Candidate[] {
       complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
     });
   });
+
+  if (isCloudflareChatConfigured()) {
+    chain.push({
+      name: cloudflareChatBreaker.name,
+      breaker: cloudflareChatBreaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) =>
+        streamCloudflareChat(messages, onToken, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) =>
+        completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
+    });
+  }
 
   chain.push({
     name: "ollama",

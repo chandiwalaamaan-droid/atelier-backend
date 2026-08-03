@@ -114,6 +114,22 @@ server.on("error", (err: any) => {
   process.exit(1);
 });
 
+// Graceful shutdown — Render sends SIGTERM before killing the dyno on
+// deploy/restart. Close the server so in-flight requests are allowed to
+// complete rather than being cut off mid-stream.
+process.on("SIGTERM", () => {
+  console.log("[atelier-backend] SIGTERM received — shutting down gracefully");
+  server.close(() => {
+    console.log("[atelier-backend] server closed");
+    process.exit(0);
+  });
+  // Hard-stop after 10 seconds in case close() hangs.
+  setTimeout(() => {
+    console.error("[atelier-backend] forced shutdown after timeout");
+    process.exit(1);
+  }, 10_000);
+});
+
 // Daily sweep: warns users ~11 months inactive, anonymizes accounts inactive
 // a full year. Runs at 03:00 UTC (~8:30 AM IST) — low-traffic window.
 // See src/jobs/retentionCleanup.ts for the actual policy.

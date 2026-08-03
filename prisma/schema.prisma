@@ -32,6 +32,8 @@ model User {
   // treated as gone everywhere except the (deliberately preserved, anonymized)
   // PaymentOrder trail — see the job for why we don't hard-delete the row.
   deletedAt              DateTime?
+  @@index([lastActiveAt])
+  @@index([deletedAt])
   characters          Character[]
   messages            Message[]
   reports             Report[]    @relation("ReportsFiled")

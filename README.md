@@ -81,25 +81,63 @@ for tax/audit purposes. `lastActiveAt` is bumped automatically on any
 authenticated request (debounced to once per 6h per user — see
 `src/lib/activity.ts`).
 
-## Deploying to Render
+## Deploying to Render (free tier — 100–200 users/day)
 
-1. Push this folder to its own GitHub repo (or a subfolder Render can point
-   at with a custom root directory).
-2. In the Render dashboard: **New → Blueprint**, point it at this repo.
-   Render reads `render.yaml` and provisions the web service and a 1GB
-   persistent disk for avatar uploads. The database is *not* provisioned by
-   Render — create a free CockroachDB Serverless cluster at
-   cockroachlabs.cloud and paste its connection string into `DATABASE_URL`
-   under the service's Environment tab (`render.yaml` leaves it as
-   `sync: false` for exactly this).
-3. Fill in the secrets Render prompts for: `FRONTEND_URL` (your Netlify site
-   URL, once you have it — you can update this after deploying the frontend),
-   plus whichever `GROQ_API_KEY` / `NVIDIA_API_KEY` / etc. you're using.
-4. Deploy. Note the resulting `https://your-service.onrender.com` URL — the
-   frontend needs it as `NEXT_PUBLIC_API_URL`.
-5. Once the frontend is deployed and you have its Netlify URL, come back and
-   set `FRONTEND_URL` on this service to that URL (comma-separated if you
-   also want to allow Netlify deploy-preview URLs), then redeploy.
+### Prerequisites (all free)
+
+| Service | Free tier limit | Sign up |
+|---|---|---|
+| **CockroachDB Serverless** | 10 GiB storage | [cockroachlabs.cloud](https://cockroachlabs.cloud) |
+| **Groq** | 100k tokens/day per account | [console.groq.com](https://console.groq.com) |
+| **NVIDIA NIM** | Free tier available | [build.nvidia.com](https://build.nvidia.com) |
+| **SambaNova Cloud** | Free tier available | [cloud.sambanova.ai](https://cloud.sambanova.ai) |
+| **Cloudflare Workers AI** | 10,000 Neurons/day | [dash.cloudflare.com](https://dash.cloudflare.com) |
+| **Backblaze B2** | 10 GB storage + 1 GB/day download | [backblaze.com/b2](https://backblaze.com/b2) |
+| **Render** | Free web service (512 MB RAM, sleeps after 15 min inactivity) | [render.com](https://render.com) |
+| **Netlify** | Free frontend hosting | [netlify.com](https://netlify.com) |
+
+### Step-by-step
+
+1. **Push this folder to GitHub.** Make the repo public if you want the community to be able to inspect the backend code.
+
+2. **Create a CockroachDB Serverless cluster** at cockroachlabs.cloud and copy the connection string.
+
+3. **Sign up for Groq, NVIDIA NIM, and SambaNova** and collect at least one API key each. Create a second Groq account and add its key as `GROQ_API_KEY_2` for double the daily token headroom.
+
+4. **Create a Backblaze B2 bucket**, create an Application Key (write-only), and note the `keyId`, `applicationKey`, `bucket name`, and `endpoint`.
+
+5. **In Render: New → Blueprint**, point at this repo. Render reads `render.yaml`. Set these env vars:
+   - `DATABASE_URL` — your CockroachDB connection string
+   - `GROQ_API_KEY` and optionally `GROQ_API_KEY_2`
+   - `NVIDIA_API_KEY` and optionally `NVIDIA_API_KEY_2`
+   - `SAMBANOVA_API_KEY` and optionally `SAMBANOVA_API_KEY_2`
+   - `CLOUDFLARE_CHAT_ACCOUNT_ID` + `CLOUDFLARE_CHAT_API_TOKEN`
+   - `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`, `B2_ENDPOINT`
+   - `FRONTEND_URL` — your Netlify URL (comma-separated for multiple)
+   - `SESSION_SECRET` — any long random string (Render can generate one)
+
+6. **Deploy the backend first.** Note the Render URL (e.g. `https://atelier-api.onrender.com`).
+
+7. **Deploy the frontend** to Netlify and set `NEXT_PUBLIC_API_URL` to your Render URL.
+
+8. **Set `FRONTEND_URL`** on Render to your Netlify URL and redeploy.
+
+9. **Test** with a few accounts to confirm chat, avatars, and discover all work before sharing publicly.
+
+### Scale notes (200 users/day, ~40k messages/day)
+
+- Cloudflare Workers AI has a hard 10,000 Neurons/day cap. It is placed last in
+  the fallback chain so its budget is only consumed when Groq/NVIDIA/SambaNova
+  are both rate-limited. With three per-key providers configured, most traffic
+  never touches Cloudflare.
+- Render's free dyno sleeps after 15 minutes of inactivity. The first request
+  after a sleep takes 10–30 seconds to warm up. This is acceptable for the
+  target scale; upgrade to the Starter plan ($7/month) if you want always-on.
+- Prisma's built-in connection pooler handles the CockroachDB connection
+  lifecycle — no external pooler needed on the free tier.
+- The in-memory rate limiter (`src/lib/rateLimit.ts`) resets on each dyno
+  restart. For the target scale this is fine; if you later upgrade to a
+  multi-instance plan, switch to a Redis-backed limiter.
 
 ## How it fits together
 
@@ -114,8 +152,8 @@ authenticated request (debounced to once per 6h per user — see
 - `src/lib/auth.ts` — JWT session cookie creation/verification (cross-site config)
 - `src/lib/db.ts` — Prisma client
 - `src/lib/rateLimit.ts` — in-memory rate limiter for login/signup/chat
-- `src/lib/providers/` — NVIDIA, SambaNova, Groq, Cloudflare (chat), Ollama clients + fallback orchestrator
-- `prisma/schema.prisma` — `User`, `Character`, `Message` tables (unchanged)
+- `src/lib/providers/` — NVIDIA, SambaNova, Groq (primary chain), Cloudflare (chat — fallback), Ollama clients + fallback orchestrator
+- `prisma/schema.prisma` — `User`, `Character`, `Message` tables
 
 ## Turning on billing (Razorpay) later
 
