@@ -359,45 +359,33 @@ function buildChain(params?: GenParams): Candidate[] {
   const chain: Candidate[] = [];
 
   // -----------------------------------------------------------------------
-  // Free-tier hosted providers — ordered by free-tier headroom and speed
+  // Free-tier hosted providers — ordered by speed (fastest first)
   // -----------------------------------------------------------------------
   //
-  // Groq is first: it offers the highest free-tier throughput (100k tokens/day
-  // per account, plus generous RPM/RPM limits), and qwen3.6-27b is fast and
-  // permissive enough for explicit-mode roleplay. Two independent key slots
-  // double the effective ceiling when they come from separate accounts.
+  // Groq is first: it has the fastest free-tier inference (LPU hardware,
+  // typically 1–3s to first token for qwen3.6-27b). Put the fastest provider
+  // first so users get a reply quickly instead of waiting for a slow one to
+  // timeout.
   //
-  // NVIDIA NIM and SambaNova follow: both have solid free tiers with their
-  // own rate limits. NVIDIA is placed before SambaNova purely for latency —
-  // NIM endpoints are consistently faster to first token than SambaNova's
-  // equivalent. Both get two independent key slots.
+  // SambaNova follows: also fast (RDU hardware, ~2–4s typical). Two
+  // independent key slots when they come from separate accounts.
+  //
+  // NVIDIA NIM is third: its free tier is solid but consistently slower to
+  // first token than Groq/SambaNova (observed 8–25s). Still useful for
+  // headroom, but not the first hop.
   //
   // Cloudflare Workers AI (Llama 4 Scout) is placed last among hosted
   // providers: its free tier is capped at 10,000 Neurons/day (not per-key),
   // which is a hard daily ceiling regardless of how many accounts you have.
   // It's still useful as a fallback — and its per-request rate limit is
-  // generous — but burning its Neurons budget on every message (as would
-  // happen if it were first in the chain) exhausts it within a few hundred
-  // requests. Keep it behind the per-key providers so it only activates when
-  // those are all rate-limited or down.
+  // generous — but burning its Neurons budget on every message exhausts it
+  // within a few hundred requests. Keep it behind the per-key providers so
+  // it only activates when those are all rate-limited or down.
   //
   // Ollama is always last: free and unlimited, but effectively single-user
   // (only as fast as your own hardware) and only reachable when running on
   // the same machine as the app. It's the guaranteed floor, not the default.
   // -----------------------------------------------------------------------
-
-  const nvidiaKeys = getNvidiaKeys();
-  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
-  nvidiaKeys.forEach(({ key, slot }) => {
-    const breaker = nvidiaBreakers[slot - 1];
-    chain.push({
-      name: breaker.name,
-      breaker,
-      isAvailable: () => true,
-      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal, params),
-      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS, params),
-    });
-  });
 
   const groqKeys = getGroqKeys();
   const groqBreakers = [groq1Breaker, groq2Breaker];
@@ -422,6 +410,19 @@ function buildChain(params?: GenParams): Candidate[] {
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
       complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
+    });
+  });
+
+  const nvidiaKeys = getNvidiaKeys();
+  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
+  nvidiaKeys.forEach(({ key, slot }) => {
+    const breaker = nvidiaBreakers[slot - 1];
+    chain.push({
+      name: breaker.name,
+      breaker,
+      isAvailable: () => true,
+      stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal, params),
+      complete: (messages) => completeNvidiaChat(messages, key, NVIDIA_TIMEOUT_MS, params),
     });
   });
 

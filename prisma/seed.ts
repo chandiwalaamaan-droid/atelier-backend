@@ -22,8 +22,13 @@ interface SeedCharacter {
 }
 
 async function main() {
-  const raw = fs.readFileSync(CHARACTERS_JSON_PATH, "utf-8");
-  const jsonCharacters: SeedCharacter[] = JSON.parse(raw);
+  let jsonCharacters: SeedCharacter[] = [];
+  try {
+    const raw = fs.readFileSync(CHARACTERS_JSON_PATH, "utf-8");
+    jsonCharacters = JSON.parse(raw) as SeedCharacter[];
+  } catch (err) {
+    console.warn(`[seed] Could not load ${CHARACTERS_JSON_PATH}: ${err instanceof Error ? err.message : err}. Continuing with SFW characters only.`);
+  }
 
   const sfwSeedCharacters: SeedCharacter[] = sfwCharacters.map((c) => ({
     name: c.name,
