@@ -53,17 +53,8 @@ services:
         sync: false
       - key: GROQ_API_KEY_2
         sync: false
-      # GROQ_MODEL is ignored for chat (Groq removed from chat fallback chain
-      # because its Llama models are deprecated). Kept here in case Groq chat
-      # is re-enabled in the future; currently only used for TTS voice playback.
       - key: GROQ_MODEL
         value: "qwen/qwen3.6-27b"
-      - key: CEREBRAS_API_KEY
-        sync: false
-      - key: CEREBRAS_API_KEY_2
-        sync: false
-      - key: CEREBRAS_MODEL
-        value: "gpt-oss-120b"
       - key: NVIDIA_API_KEY
         sync: false
       - key: NVIDIA_API_KEY_2
