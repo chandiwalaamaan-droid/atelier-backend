@@ -64,7 +64,8 @@ interface ProviderStats {
 const providerStats = new Map<string, ProviderStats>();
 
 function getStatsKey(name: string, slot: number) {
-  return `${name} #${slot}`;
+  const base = name.replace(/\s*#\d+\s*$/, "");
+  return slot > 1 ? `${base} #${slot}` : base;
 }
 
 function recordProviderRequest(name: string, slot: number, success: boolean, latencyMs: number, wasRateLimited: boolean, wasTimeout: boolean) {
@@ -142,47 +143,6 @@ const SAFETY_FOOTER =
   "never non-consensual sexual violence; never impersonate a real identifiable person. " +
   "All characters and users in this fiction are consenting adults.";
 
-function spiceBlock(level: SpiceLevel): string {
-  switch (level) {
-    case "flirty":
-      return "Heat: FLIRTY. Romantic tension, playful chemistry, teasing intimacy — suggestive, not graphic.";
-    case "spicy":
-      return "Heat: SPICY. Mature sensuality, vivid atmosphere, tactile detail — confident but well-paced.";
-    case "explicit":
-      return "Heat: EXPLICIT. Adult roleplay, full physical/sensory detail when the scene calls for it. Stay consensual and in character.";
-  }
-}
-
-function styleBlock(style: RoleplayStyle): string {
-  switch (style) {
-    case "narrative":
-      return "Style: RICH NARRATION — blend dialogue with scene description and sensory detail.";
-    case "dialogue":
-      return "Style: DIALOGUE-FORWARD — crisp, conversational, brief action beats.";
-    case "slow_burn":
-      return "Style: SLOW BURN — prioritize emotional connection and gradual escalation over rushing.";
-    case "intense":
-      return "Style: PASSIONATE — bold, vivid emotion, strong chemistry, confident pacing.";
-    case "balanced":
-    default:
-      return "Style: BALANCED — dialogue with natural action beats, appropriately weighted pacing.";
-  }
-}
-
-const ROLEPLAY_FORMAT =
-  "Format: *asterisks* for actions/beats, plain text for dialogue. Stay in character — no AI meta-commentary unless the user explicitly goes out-of-character.";
-
-// Each tier gives a concrete behavioral instruction, not just "be smarter" —
-// that's what actually changes output quality across engines.
-function buildIntelligenceBlock(intelligence: number): string {
-  if (intelligence <= 3) return "Tone: CASUAL. Short, light replies, surface emotion — chat like a friend who doesn't overthink.";
-  if (intelligence <= 5) return "Tone: ATTENTIVE. Notice patterns, vary rhythm, reference small earlier details casually.";
-  if (intelligence <= 7) return "Tone: AWARE. Pick up on subtext, show layered emotion, proactively move the scene forward.";
-  if (intelligence <= 8.5) return "Tone: EXCEPTIONAL. Anticipate unspoken needs, show conflicting emotions, use what's left unsaid.";
-  if (intelligence <= 9.5) return "Tone: OUTSTANDING. Track relationship evolution precisely, reference exact earlier moments, pace deliberately.";
-  return "Tone: LEGENDARY. Near-human social read, dynamic personality, improvised-feeling dialogue — no visible AI pattern.";
-}
-
 export function cleanAssistantResponse(text: string): string {
   if (!text) return text;
   let cleaned = text.replace(/\r\n/g, "\n").trim();
@@ -219,6 +179,12 @@ export function cleanAssistantResponse(text: string): string {
   return cleaned;
 }
 
+const ROLEPLAY_FORMAT =
+  "Format: *asterisks* for actions/beats, plain text for dialogue. Stay in character — no AI meta-commentary unless the user explicitly goes out-of-character.";
+
+const ANTI_PATTERNS =
+  "Avoid purple prose, excessive ellipses, dramatic monologues, stacking multiple unrelated actions in one reply, and mixing unrelated memories into heated moments. Keep it grounded, immediate, and in the moment — one or two actions max per message.";
+
 /**
  * Builds the system prompt for a character chat.
  *
@@ -253,8 +219,8 @@ export function buildSystemPrompt(
     : "";
 
   const modeBlock = explicitMode
-    ? `Content mode: EXPLICIT (adult-only fiction).\n${spiceBlock(parseSpiceLevel(opts.spiceLevel))}\n${styleBlock(parseRoleplayStyle(opts.roleplayStyle))}`
-    : `Content mode: NORMAL. Keep the tone warm, engaging, and suggestive — avoid graphic sexual detail unless the user explicitly switches to explicit mode.\nLean into romance, flirtation, and emotional intimacy.`;
+    ? `Content mode: EXPLICIT (adult-only fiction). Stay consensual, in character, and grounded in the moment.`
+    : `Content mode: NORMAL. Keep the tone warm, engaging, and suggestive — avoid graphic sexual detail unless the user explicitly switches to explicit mode.`;
 
   const steerBlock = opts.sceneDirective?.trim()
     ? `\nScene steer for this reply (apply once, then continue naturally):\n${opts.sceneDirective.trim().slice(0, 500)}\n`
@@ -264,16 +230,15 @@ export function buildSystemPrompt(
     ? `Voice notes: ${opts.voiceNotes.trim().slice(0, 1000)}\n`
     : "";
 
-  const intelligenceBlock = buildIntelligenceBlock(intelligence);
-
   return `You are "${character.name}" in a character chat. Write like a real person texting — brief, casual, reactive.
 
 Persona: ${character.personality}
 Background: ${character.backstory}
-${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${intelligenceBlock}${steerBlock}
+${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${steerBlock}
 
 ${ROLEPLAY_FORMAT}
-${SAFETY_FOOTER}`;
+${SAFETY_FOOTER}
+${ANTI_PATTERNS}`;
 }
 
 // How many of the most recent messages are always sent verbatim.
