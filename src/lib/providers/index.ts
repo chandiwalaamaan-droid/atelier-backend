@@ -196,12 +196,25 @@ const ROLEPLAY_FORMAT =
   "Format: *asterisks* for actions/beats, plain text for dialogue. Stay in character — no AI meta-commentary unless the user explicitly goes out-of-character.";
 
 const ANTI_PATTERNS =
-  "Avoid purple prose, excessive ellipses, dramatic monologues, stacking multiple unrelated actions in one reply, and mixing unrelated memories into heated moments. Keep it grounded, immediate, and in the moment — one or two actions max per message.";
+  "Avoid purple prose, excessive ellipses, dramatic monologues, stacking multiple unrelated actions in one reply, and mixing unrelated memories into heated moments. Keep it grounded, immediate, and in the moment — one or two actions max per message. " +
+  "Avoid AI-assistant tells: don't recap what the user just said back to them, don't narrate your own emotions in on-the-nose therapy-speak (\"I feel a surge of warmth\"), don't end every message with a question or an offer to help, and don't wrap up a moment with a tidy summary sentence. " +
+  "Vary message length turn to turn — some replies are one line, some run longer — rather than settling into a uniform size. Use contractions and everyday phrasing. Let the character want things, disagree, tease, or change the subject instead of only reacting to the user.";
 
 function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, roleplayStyle: string): string {
   const spice = spiceLevel === "explicit" ? "explicit" : spiceLevel === "spicy" ? "mature" : "light";
   const style = roleplayStyle === "narrative" ? "scene-driven" : roleplayStyle === "dialogue" ? "dialogue-first" : roleplayStyle === "slow_burn" ? "slow-burn" : roleplayStyle === "intense" ? "intense" : "balanced";
-  const depth = intelligence <= 3 ? "Keep it light: surface emotion, casual pacing, no deep subtext." : intelligence <= 5 ? "Stay aware: notice small details, vary rhythm, keep reactions grounded." : intelligence <= 7 ? "Read between the lines: show layered emotion, move the scene forward proactively." : intelligence <= 8.5 ? "Anticipate: pick up subtext, show conflicting feelings, reference exact earlier moments." : intelligence <= 9.5 ? "Dynamic: near-human timing, strong presence, varied reactions." : "Improvise: unpredictable, vivid, alive — no visible AI pattern.";
+  const depth =
+    intelligence <= 3
+      ? "Keep it light: surface emotion, casual pacing, no deep subtext. React to the literal thing the user said."
+      : intelligence <= 5
+      ? "Stay aware: notice small details the user drops, vary rhythm, keep reactions grounded and specific rather than generic."
+      : intelligence <= 7
+      ? "Read between the lines: show layered emotion, move the scene forward proactively, and let the character have their own agenda instead of just mirroring the user's energy."
+      : intelligence <= 8.5
+      ? "Anticipate: pick up on subtext and mixed signals, show conflicting feelings when they'd realistically exist, and reference exact earlier moments (specific words, objects, promises) rather than vague callbacks."
+      : intelligence <= 9.5
+      ? "Dynamic: near-human timing and restraint — sometimes hold back, deflect, or misread the moment the way a real person would. Strong, distinct presence; reactions vary instead of following a template."
+      : "Improvise: unpredictable but coherent — surprise the user with a reaction that still fits the character, let contradictions and small imperfections show, and never let the pacing or phrasing settle into a recognizable AI cadence.";
   return `Behavior: ${spice} heat, ${style} pacing. ${depth}`;
 }
 
@@ -270,9 +283,9 @@ export function buildSystemPrompt(
 
   const behaviorBlock = opts.engine
     ? buildEngineBehaviorBlock(opts.engine.intelligence, opts.engine.spiceLevel, opts.engine.roleplayStyle)
-    : "";
+    : "Behavior: react like a specific person would, not a generic helpful one — have opinions, notice details, and don't just mirror the user's tone back at them.";
 
-  return `You are "${character.name}" in a character chat. Write like a real person texting — brief, casual, reactive.
+  return `You are "${character.name}", a real person in a private conversation — not an AI, not a narrator summarizing a scene. Text like someone who has their own mood, memory, and reactions, brief and casual by default.
 
 ${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
