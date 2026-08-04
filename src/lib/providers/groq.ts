@@ -42,7 +42,25 @@ export function getGroqKeys(): { key: string; slot: number }[] {
 // param is specific to Qwen models on Groq (gpt-oss models use a different
 // include_reasoning flag instead), so it's only sent when GROQ_MODEL is a
 // Qwen model — sending it for other models could cause a 400.
-const REASONING_EXTRA_BODY = MODEL.startsWith("qwen/") ? { reasoning_format: "hidden" } : undefined;
+const IS_REASONING_MODEL = MODEL.startsWith("qwen/");
+const REASONING_EXTRA_BODY = IS_REASONING_MODEL ? { reasoning_format: "hidden" } : undefined;
+
+// Reasoning models spend part of max_tokens on hidden <think>...</think>
+// chain-of-thought before any reply content comes out. The shared default
+// of 1024 (openaiCompatible.ts) is fine for plain chat models, but for a
+// reasoning model it's frequently not enough room for both the thinking and
+// the actual reply — the stream can end mid-<think>, in which case
+// thinkFilter discards everything and the completion comes back empty
+// (this was the root cause of Groq intermittently "answering" with
+// nothing). Give reasoning models a bigger budget. Override with
+// GROQ_MAX_TOKENS if 3072 still isn't enough headroom for heavier turns.
+const MAX_TOKENS = envInt("GROQ_MAX_TOKENS", IS_REASONING_MODEL ? 3072 : 1024);
+
+function envInt(name: string, def: number): number {
+  const raw = process.env[name];
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) ? parsed : def;
+}
 
 function genParamsExtraBody(params?: GenParams): Record<string, unknown> | undefined {
   const body: Record<string, unknown> = { ...REASONING_EXTRA_BODY };
@@ -59,7 +77,7 @@ export async function streamGroqChat(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params), MAX_TOKENS);
 }
 
 export async function completeGroqChat(
@@ -68,7 +86,7 @@ export async function completeGroqChat(
   timeoutMs: number,
   params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params), MAX_TOKENS);
 }
 
 // ---------------------------------------------------------------------------

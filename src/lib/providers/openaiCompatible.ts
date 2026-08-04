@@ -105,6 +105,33 @@ async function readErrorBody(res: Response): Promise<string> {
   return text.slice(0, 500);
 }
 
+/**
+ * Thrown when a provider returns HTTP 200 with no usable content instead of
+ * erroring outright. The most common cause here: a reasoning model (e.g.
+ * Qwen on Groq) burns its entire max_tokens budget on hidden <think>...
+ * </think> chain-of-thought and the stream ends before any real reply is
+ * emitted, so thinkFilter discards everything and fullText is "".
+ *
+ * Before this existed, attemptStream() logged "answered" for these (the
+ * HTTP call itself didn't throw) and streamChatWithFallback() silently
+ * moved on to the next candidate with zero indication of why — making it
+ * look like the provider was randomly flaky instead of predictably running
+ * out of reasoning budget. Throwing this turns that into a visible,
+ * loggable, stats-trackable failure.
+ */
+export class EmptyResponseError extends Error {
+  readonly finishReason: string | null;
+  constructor(baseUrl: string, finishReason: string | null) {
+    const hint =
+      finishReason === "length"
+        ? " (hit max_tokens — likely reasoning consumed the whole budget before any reply content)"
+        : "";
+    super(`Request to ${baseUrl} returned an empty completion${hint}.`);
+    this.name = "EmptyResponseError";
+    this.finishReason = finishReason;
+  }
+}
+
 export async function streamOpenAICompatibleChat(
   baseUrl: string,
   apiKey: string,
@@ -113,7 +140,8 @@ export async function streamOpenAICompatibleChat(
   onToken: (chunk: string) => void,
   timeoutMs: number,
   clientSignal?: AbortSignal,
-  extraBody?: Record<string, unknown>
+  extraBody?: Record<string, unknown>,
+  maxTokens: number = 1024
 ): Promise<string> {
   const controller = new AbortController();
   let firstTokenReceived = false;
@@ -144,7 +172,7 @@ export async function streamOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: true, max_tokens: 1024, ...extraBody }),
+        body: JSON.stringify({ model, messages, stream: true, max_tokens: maxTokens, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -164,6 +192,7 @@ export async function streamOpenAICompatibleChat(
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let finishReason: string | null = null;
     let chunkTimer: ReturnType<typeof setTimeout> | null = null;
     const resetChunkTimer = () => {
       if (chunkTimer) clearTimeout(chunkTimer);
@@ -219,6 +248,8 @@ export async function streamOpenAICompatibleChat(
               onToken(visible);
             }
           }
+          const reason: string | undefined = parsed?.choices?.[0]?.finish_reason;
+          if (reason) finishReason = reason;
         }
         if (clientAborted) return fullText;
       }
@@ -227,6 +258,10 @@ export async function streamOpenAICompatibleChat(
       if (remainder) {
         fullText += remainder;
         onToken(remainder);
+      }
+
+      if (fullText.trim().length === 0) {
+        throw new EmptyResponseError(baseUrl, finishReason);
       }
 
       return fullText;
@@ -245,7 +280,8 @@ export async function completeOpenAICompatibleChat(
   model: string,
   messages: ChatMessage[],
   timeoutMs: number,
-  extraBody?: Record<string, unknown>
+  extraBody?: Record<string, unknown>,
+  maxTokens: number = 1024
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -259,7 +295,7 @@ export async function completeOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: false, max_tokens: 1024, ...extraBody }),
+        body: JSON.stringify({ model, messages, stream: false, max_tokens: maxTokens, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -275,8 +311,12 @@ export async function completeOpenAICompatibleChat(
     }
 
     const data = await res.json();
-    const text: string = data?.choices?.[0]?.message?.content ?? "";
-    return stripThinkTags(text);
+    const finishReason: string | null = data?.choices?.[0]?.finish_reason ?? null;
+    const text: string = stripThinkTags(data?.choices?.[0]?.message?.content ?? "");
+    if (text.trim().length === 0) {
+      throw new EmptyResponseError(baseUrl, finishReason);
+    }
+    return text;
   } finally {
     clearTimeout(timer);
   }

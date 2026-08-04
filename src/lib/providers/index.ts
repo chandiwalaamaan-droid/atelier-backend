@@ -15,6 +15,7 @@ import { streamSambanovaChat, completeSambanovaChat, isSambanovaConfigured, getS
 import { streamCloudflareChat, completeCloudflareChat, isCloudflareChatConfigured } from "./cloudflareChat";
 import { streamOllamaChat, completeOllamaChat, isOllamaAvailable } from "./ollama";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "./circuitBreaker";
+import { EmptyResponseError } from "./openaiCompatible";
 import { getEngineConfig, type RoleplayEngineConfig } from "./engines";
 import crypto from "crypto";
 
@@ -57,6 +58,7 @@ interface ProviderStats {
   requests: number;
   rateLimitHits: number;
   timeoutHits: number;
+  emptyHits: number;
   successLatencies: number[];
   windowStart: number;
 }
@@ -68,7 +70,15 @@ function getStatsKey(name: string, slot: number) {
   return slot > 1 ? `${base} #${slot}` : base;
 }
 
-function recordProviderRequest(name: string, slot: number, success: boolean, latencyMs: number, wasRateLimited: boolean, wasTimeout: boolean) {
+function recordProviderRequest(
+  name: string,
+  slot: number,
+  success: boolean,
+  latencyMs: number,
+  wasRateLimited: boolean,
+  wasTimeout: boolean,
+  wasEmpty: boolean = false
+) {
   const key = getStatsKey(name, slot);
   const stats = providerStats.get(key) || {
     name,
@@ -76,12 +86,14 @@ function recordProviderRequest(name: string, slot: number, success: boolean, lat
     requests: 0,
     rateLimitHits: 0,
     timeoutHits: 0,
+    emptyHits: 0,
     successLatencies: [],
     windowStart: Date.now(),
   };
   stats.requests++;
   if (wasRateLimited) stats.rateLimitHits++;
   if (wasTimeout) stats.timeoutHits++;
+  if (wasEmpty) stats.emptyHits++;
   if (success && latencyMs > 0) stats.successLatencies.push(latencyMs);
   providerStats.set(key, stats);
 }
@@ -107,6 +119,7 @@ function logProviderStats() {
       `req: ${String(stats.requests).padStart(4)} | ` +
       `rate-limited: ${String(stats.rateLimitHits).padStart(3)} | ` +
       `timeout: ${String(stats.timeoutHits).padStart(3)} | ` +
+      `empty: ${String(stats.emptyHits).padStart(3)} | ` +
       `avg: ${String(avgLatency).padStart(5)}ms | ` +
       `p95: ${String(p95).padStart(5)}ms`
     );
@@ -493,14 +506,29 @@ async function attemptStream(
     return { text };
   } catch (err) {
     const latency = Date.now() - start;
-    const wasRateLimited = isRateLimitError(err);
-    const wasTimeout = isTimeoutError(err);
-    console.warn(`[providers] ${candidate.name} failed, falling back:`, err);
+    const wasEmpty = err instanceof EmptyResponseError;
+    const wasRateLimited = !wasEmpty && isRateLimitError(err);
+    const wasTimeout = !wasEmpty && isTimeoutError(err);
+    if (wasEmpty) {
+      // Not a network/timeout failure — the provider answered 200 OK with
+      // nothing usable (most often a reasoning model burning its whole
+      // max_tokens budget on hidden <think> content). Call this out
+      // distinctly so it doesn't get read as generic flakiness.
+      console.warn(
+        `[providers] ${candidate.name} returned an EMPTY completion (finish_reason=${err.finishReason ?? "unknown"}) — falling back:`,
+        err.message
+      );
+    } else {
+      console.warn(`[providers] ${candidate.name} failed, falling back:`, err);
+    }
     if (candidate.breaker) {
       if (wasTimeout) candidate.breaker.recordTimeout();
       else if (wasRateLimited) candidate.breaker.trip(err);
+      // Empty responses deliberately do NOT trip the breaker — the key/slot
+      // itself is fine (it answered), it's a per-turn token-budget issue,
+      // so there's no reason to cool the whole slot down.
     }
-    recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
+    recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout, wasEmpty);
     errors.push(`${candidate.name}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
