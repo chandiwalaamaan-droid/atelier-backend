@@ -185,6 +185,13 @@ const ROLEPLAY_FORMAT =
 const ANTI_PATTERNS =
   "Avoid purple prose, excessive ellipses, dramatic monologues, stacking multiple unrelated actions in one reply, and mixing unrelated memories into heated moments. Keep it grounded, immediate, and in the moment — one or two actions max per message.";
 
+function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, roleplayStyle: string): string {
+  const spice = spiceLevel === "explicit" ? "explicit" : spiceLevel === "spicy" ? "mature" : "light";
+  const style = roleplayStyle === "narrative" ? "scene-driven" : roleplayStyle === "dialogue" ? "dialogue-first" : roleplayStyle === "slow_burn" ? "slow-burn" : roleplayStyle === "intense" ? "intense" : "balanced";
+  const depth = intelligence <= 3 ? "Keep it light: surface emotion, casual pacing, no deep subtext." : intelligence <= 5 ? "Stay aware: notice small details, vary rhythm, keep reactions grounded." : intelligence <= 7 ? "Read between the lines: show layered emotion, move the scene forward proactively." : intelligence <= 8.5 ? "Anticipate: pick up subtext, show conflicting feelings, reference exact earlier moments." : intelligence <= 9.5 ? "Dynamic: near-human timing, strong presence, varied reactions." : "Improvise: unpredictable, vivid, alive — no visible AI pattern.";
+  return `Behavior: ${spice} heat, ${style} pacing. ${depth}`;
+}
+
 /**
  * Builds the system prompt for a character chat.
  *
@@ -230,11 +237,15 @@ export function buildSystemPrompt(
     ? `Voice notes: ${opts.voiceNotes.trim().slice(0, 1000)}\n`
     : "";
 
+  const behaviorBlock = opts.engine
+    ? buildEngineBehaviorBlock(opts.engine.intelligence, opts.engine.spiceLevel, opts.engine.roleplayStyle)
+    : "";
+
   return `You are "${character.name}" in a character chat. Write like a real person texting — brief, casual, reactive.
 
 Persona: ${character.personality}
 Background: ${character.backstory}
-${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${steerBlock}
+${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${behaviorBlock}\n${steerBlock}
 
 ${ROLEPLAY_FORMAT}
 ${SAFETY_FOOTER}

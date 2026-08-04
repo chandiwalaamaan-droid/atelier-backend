@@ -144,7 +144,7 @@ export async function streamOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: true, ...extraBody }),
+        body: JSON.stringify({ model, messages, stream: true, max_tokens: 1024, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -259,7 +259,7 @@ export async function completeOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: false, ...extraBody }),
+        body: JSON.stringify({ model, messages, stream: false, max_tokens: 1024, ...extraBody }),
         signal: controller.signal,
       });
     } catch (err) {
