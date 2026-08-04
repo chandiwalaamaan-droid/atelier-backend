@@ -19,7 +19,12 @@ const MAX_WAIT_MS = Number(process.env.IMAGE_GEN_WAIT_TIMEOUT_MS || "60000");
 const MAX_QUEUE_DEPTH = Number(process.env.IMAGE_GEN_MAX_QUEUE_DEPTH || "50");
 
 let active = 0;
-const waiters: (() => void)[] = [];
+// Each waiter carries its own timeout handle so release() can clear it
+// when it resolves the waiter normally, instead of leaving a dangling
+// timer running (and holding the event loop open) until it fires later
+// and does a pointless no-op reject/splice against an already-settled
+// promise.
+const waiters: { resolve: () => void; timer: ReturnType<typeof setTimeout> }[] = [];
 
 async function acquire(): Promise<void> {
   if (waiters.length >= MAX_QUEUE_DEPTH) {
@@ -39,14 +44,17 @@ async function acquire(): Promise<void> {
       );
     }
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const idx = waiters.indexOf(resolve);
-        if (idx !== -1) waiters.splice(idx, 1);
-        reject(new Error(
-          `Image generation wait timed out after ${MAX_WAIT_MS / 1000}s. Please try again.`
-        ));
-      }, remaining);
-      waiters.push(resolve);
+      const entry = {
+        resolve,
+        timer: setTimeout(() => {
+          const idx = waiters.indexOf(entry);
+          if (idx !== -1) waiters.splice(idx, 1);
+          reject(new Error(
+            `Image generation wait timed out after ${MAX_WAIT_MS / 1000}s. Please try again.`
+          ));
+        }, remaining),
+      };
+      waiters.push(entry);
     });
   }
   active += 1;
@@ -55,7 +63,10 @@ async function acquire(): Promise<void> {
 function release(): void {
   active -= 1;
   const next = waiters.shift();
-  if (next) next();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve();
+  }
 }
 
 export async function acquireImageGenSlot(): Promise<void> {
@@ -75,9 +86,10 @@ export function startImageGenWorker(): void {
 
 export async function closeImageGenQueue(): Promise<void> {
   const errors: Error[] = [];
-  for (const resolve of waiters.splice(0)) {
+  for (const entry of waiters.splice(0)) {
     try {
-      resolve();
+      clearTimeout(entry.timer);
+      entry.resolve();
     } catch (err) {
       errors.push(err instanceof Error ? err : new Error(String(err)));
     }

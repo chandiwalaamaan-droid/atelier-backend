@@ -221,6 +221,7 @@ export function buildSystemPrompt(
     backstory: string;
     memorySummary?: string;
     roleplayNotes?: string;
+    examples?: string;
   },
   options: RoleplayPromptOptions | boolean = false
 ) {
@@ -237,6 +238,23 @@ export function buildSystemPrompt(
   const notesBlock = character.roleplayNotes?.trim()
     ? `Creator scenario notes (flavor for this persona):\n${character.roleplayNotes.trim()}\n`
     : "";
+
+  let examplesBlock = "";
+  if (character.examples?.trim()) {
+    try {
+      const parsed = JSON.parse(character.examples);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const lines = parsed.slice(0, 8).map((turn: { user?: string; character?: string }) => {
+          const userLine = typeof turn.user === "string" ? `User: ${turn.user}` : "";
+          const charLine = typeof turn.character === "string" ? `${character.name}: ${turn.character}` : "";
+          return [userLine, charLine].filter(Boolean).join("\n");
+        });
+        examplesBlock = `Example conversations (match this tone and style):\n${lines.join("\n\n")}\n`;
+      }
+    } catch {
+      /* ignore malformed examples */
+    }
+  }
 
   const modeBlock = explicitMode
     ? `Content mode: EXPLICIT (adult-only fiction). Stay consensual, in character, and grounded in the moment.`
@@ -256,7 +274,7 @@ export function buildSystemPrompt(
 
   return `You are "${character.name}" in a character chat. Write like a real person texting — brief, casual, reactive.
 
-Persona: ${character.personality}
+${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
 ${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${behaviorBlock}\n${steerBlock}
 

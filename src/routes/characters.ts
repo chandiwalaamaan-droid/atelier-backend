@@ -28,6 +28,8 @@ type CharacterInput = {
   roleplayNotes: string;
   avatarPrompt: string;
   scenePromptTemplate: string;
+  examples: string;
+  tags: string;
 };
 
 const MAX_PROMPT_FIELD_LENGTH = 2000;
@@ -35,6 +37,40 @@ const MAX_PROMPT_FIELD_LENGTH = 2000;
 function cleanPrompt(value: unknown, fallback = "") {
   if (typeof value !== "string") return fallback;
   return value.trim().slice(0, MAX_PROMPT_FIELD_LENGTH);
+}
+
+function parseExamples(value: unknown): string {
+  if (typeof value !== "string") return "[]";
+  const trimmed = value.trim();
+  if (!trimmed) return "[]";
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return "[]";
+    const sanitized = parsed.slice(0, 10).map((turn: any) => ({
+      user: typeof turn?.user === "string" ? turn.user.slice(0, 500) : "",
+      character: typeof turn?.character === "string" ? turn.character.slice(0, 500) : "",
+    })).filter((turn: any) => turn.user || turn.character);
+    return JSON.stringify(sanitized);
+  } catch {
+    return "[]";
+  }
+}
+
+function parseTags(value: unknown): string {
+  if (typeof value !== "string") return "[]";
+  const trimmed = value.trim();
+  if (!trimmed) return "[]";
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      const sanitized = parsed.filter((t: any) => typeof t === "string").map((t: string) => t.trim().slice(0, 30)).filter(Boolean).slice(0, 10);
+      return JSON.stringify(sanitized);
+    }
+  } catch {
+    // fall through to comma-separated parsing
+  }
+  const sanitized = trimmed.split(",").map((t) => t.trim().slice(0, 30)).filter(Boolean).slice(0, 10);
+  return JSON.stringify(sanitized);
 }
 
 function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: string } {
@@ -54,14 +90,10 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
   const isExplicit = raw.isExplicit === true;
   const isPublic = (raw.isPublic === true) && !isExplicit;
   const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
-  // Exact creator-specified appearance description — used verbatim as the
-  // primary image-gen prompt (avatar/background) and as the visual identity
-  // anchor for in-chat scene generation. Optional: falls back to personality/
-  // tagline-derived prompts in avatar.ts when not provided.
   const avatarPrompt = cleanPrompt(raw.avatarPrompt);
-  // Optional art-style / setting DNA reused across every in-chat scene image
-  // for this character so scenes stay visually consistent with each other.
   const scenePromptTemplate = cleanPrompt(raw.scenePromptTemplate);
+  const examples = parseExamples(raw.examples);
+  const tags = parseTags(raw.tags);
 
   if (!name || !personality || !backstory || !greeting) {
     return { error: "Name, personality, backstory, and greeting are all required." };
@@ -81,6 +113,8 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
       roleplayNotes,
       avatarPrompt,
       scenePromptTemplate,
+      examples,
+      tags,
     },
   };
 }
@@ -325,6 +359,8 @@ router.put("/:id", asyncHandler(async (req, res) => {
     : "";
   const avatarPrompt = cleanPrompt(body.avatarPrompt, existing.avatarPrompt ?? "");
   const scenePromptTemplate = cleanPrompt(body.scenePromptTemplate, existing.scenePromptTemplate ?? "");
+  const examples = typeof body.examples === "string" ? parseExamples(body.examples) : existing.examples;
+  const tags = typeof body.tags === "string" ? parseTags(body.tags) : existing.tags;
 
   if (!name || !personality || !backstory || !greeting) {
     return res.status(400).json({ error: "Name, personality, backstory, and greeting are all required." });
@@ -350,6 +386,8 @@ router.put("/:id", asyncHandler(async (req, res) => {
       roleplayNotes,
       avatarPrompt,
       scenePromptTemplate,
+      examples,
+      tags,
     },
   });
 
@@ -394,6 +432,8 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
       isExplicit: source.isExplicit,
       avatarPrompt: source.avatarPrompt,
       scenePromptTemplate: source.scenePromptTemplate,
+      examples: source.examples,
+      tags: source.tags,
       isPublic: false, // the remix starts private; the user can choose to share their own copy later
     },
   });

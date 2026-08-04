@@ -244,6 +244,27 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   }
 }));
 
+router.delete("/:characterId/messages/:messageId", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const { characterId, messageId } = req.params;
+  const character = await prisma.character.findUnique({ where: { id: characterId } });
+  if (!character || character.ownerId !== userId) {
+    return res.status(404).json({ error: "Character not found." });
+  }
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, characterId, userId },
+  });
+  if (!message) {
+    return res.status(404).json({ error: "Message not found." });
+  }
+
+  await prisma.message.delete({ where: { id: messageId } });
+  return res.json({ ok: true });
+}));
+
 // Resets a conversation: wipes stored messages and the running memory summary
 // for this character, scoped to the current user, without deleting the character itself.
 router.delete("/:characterId", asyncHandler(async (req, res) => {

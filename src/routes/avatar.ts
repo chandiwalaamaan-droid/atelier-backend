@@ -226,27 +226,40 @@ async function processImageGen(data: ImageGenJobData): Promise<ImageGenJobResult
         return Promise.reject(new Error(`pollinations: ${msg}`));
       });
 
-    const cloudflarePromise = cloudflareAvailable
-      ? cloudflareFn()
-          .then((result) => ({ result, provider: "cloudflare" } as const))
-          .catch((err) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            return Promise.reject(new Error(`cloudflare: ${msg}`));
-          })
-      : Promise.reject(new Error("cloudflare: not configured"));
+    // Bug fix: this used to be `Promise.reject(...)` when Cloudflare isn't
+    // configured — an already-settled rejected promise created at the top
+    // of the function. Racing that against the real, still-in-flight
+    // Pollinations call meant the race always resolved to this rejection
+    // immediately, and the catch-block fallback re-awaited the very same
+    // already-rejected promise instead of the in-flight Pollinations one.
+    // Net effect: whenever Cloudflare wasn't configured (a common setup —
+    // it needs an extra API token), avatar/background generation always
+    // failed even though Pollinations would have succeeded. Only build a
+    // real Cloudflare attempt when it's actually configured, and use
+    // Promise.any so whichever provider finishes successfully first wins,
+    // regardless of which one was faster to *settle*.
+    const attempts = cloudflareAvailable
+      ? [
+          pollinationsPromise,
+          cloudflareFn()
+            .then((result) => ({ result, provider: "cloudflare" } as const))
+            .catch((err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              return Promise.reject(new Error(`cloudflare: ${msg}`));
+            }),
+        ]
+      : [pollinationsPromise];
 
     try {
-      const winner = await Promise.race([pollinationsPromise, cloudflarePromise]);
+      const winner = await Promise.any(attempts);
       return { bytes: winner.result, provider: winner.provider };
-    } catch (pollinationsErr) {
-      try {
-        const winner = await cloudflarePromise;
-        return { bytes: winner.result, provider: winner.provider };
-      } catch (cloudflareErr) {
-        const pMsg = pollinationsErr instanceof Error ? pollinationsErr.message : String(pollinationsErr);
-        const cMsg = cloudflareErr instanceof Error ? cloudflareErr.message : String(cloudflareErr);
-        throw new Error(`All providers failed: ${pMsg}; ${cMsg}`);
-      }
+    } catch (err) {
+      const messages =
+        err instanceof AggregateError
+          ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
+          : [err instanceof Error ? err.message : String(err)];
+      if (!cloudflareAvailable) messages.push("cloudflare: not configured");
+      throw new Error(`All providers failed: ${messages.join("; ")}`);
     }
   } finally {
     releaseImageGenSlot();
