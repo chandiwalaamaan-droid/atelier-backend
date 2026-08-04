@@ -45,51 +45,79 @@ export type GenParams = {
 };
 
 // ---------------------------------------------------------------------------
-// Response cache — deduplicates identical requests so we don't burn provider
-// tokens on the same conversation state twice. Transparent to the user;
-// streaming behaviour is preserved by replaying the cached text in small
-// chunks with short delays so the frontend's streaming parser works the
-// same way it does for live provider responses.
+// Provider request stats tracker
 // ---------------------------------------------------------------------------
+// Tracks per-provider request counts, rate-limit hits, and timeout hits.
+// Logs a summary every 60 seconds so you can see which keys are burning
+// through free-tier limits and where the chain is spending most of its time.
 
-// Bumped from 5 to 30 minutes: character scenes/openers repeat a lot across
-// different users (same character, same greeting, same early scene beats),
-// so a longer TTL turns more of that repetition into free cache hits without
-// meaningfully hurting freshness for a chat reply.
-const CACHE_TTL_MS = 30 * 60 * 1000;
-const MAX_CACHE_SIZE = 500;
-const responseCache = new Map<string, { text: string; expiresAt: number }>();
-
-function cacheKey(messages: ChatMessage[], params?: GenParams): string {
-  const payload = JSON.stringify({ messages, params });
-  return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 16);
+interface ProviderStats {
+  name: string;
+  slot: number;
+  requests: number;
+  rateLimitHits: number;
+  timeoutHits: number;
+  successLatencies: number[];
+  windowStart: number;
 }
 
-function getCached(key: string): string | null {
-  const entry = responseCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    responseCache.delete(key);
-    return null;
+const providerStats = new Map<string, ProviderStats>();
+
+function getStatsKey(name: string, slot: number) {
+  return `${name} #${slot}`;
+}
+
+function recordProviderRequest(name: string, slot: number, success: boolean, latencyMs: number, wasRateLimited: boolean, wasTimeout: boolean) {
+  const key = getStatsKey(name, slot);
+  const stats = providerStats.get(key) || {
+    name,
+    slot,
+    requests: 0,
+    rateLimitHits: 0,
+    timeoutHits: 0,
+    successLatencies: [],
+    windowStart: Date.now(),
+  };
+  stats.requests++;
+  if (wasRateLimited) stats.rateLimitHits++;
+  if (wasTimeout) stats.timeoutHits++;
+  if (success && latencyMs > 0) stats.successLatencies.push(latencyMs);
+  providerStats.set(key, stats);
+}
+
+function logProviderStats() {
+  const now = Date.now();
+  const entries = [...providerStats.entries()];
+  if (entries.length === 0) return;
+  console.log("\n[stats] === Provider stats (last 60s) ===");
+  for (const [key, stats] of entries) {
+    const avgLatency = stats.successLatencies.length > 0
+      ? Math.round(stats.successLatencies.reduce((a, b) => a + b, 0) / stats.successLatencies.length)
+      : 0;
+    const p95 = stats.successLatencies.length > 0
+      ? (() => {
+          const sorted = [...stats.successLatencies].sort((a, b) => a - b);
+          const idx = Math.floor(sorted.length * 0.95);
+          return sorted[Math.min(idx, sorted.length - 1)];
+        })()
+      : 0;
+    console.log(
+      `[stats] ${key.padEnd(20)} | ` +
+      `req: ${String(stats.requests).padStart(4)} | ` +
+      `rate-limited: ${String(stats.rateLimitHits).padStart(3)} | ` +
+      `timeout: ${String(stats.timeoutHits).padStart(3)} | ` +
+      `avg: ${String(avgLatency).padStart(5)}ms | ` +
+      `p95: ${String(p95).padStart(5)}ms`
+    );
   }
-  return entry.text;
-}
-
-function setCached(key: string, text: string): void {
-  if (responseCache.size >= MAX_CACHE_SIZE) {
-    const oldest = [...responseCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
-    if (oldest) responseCache.delete(oldest[0]);
-  }
-  responseCache.set(key, { text, expiresAt: Date.now() + CACHE_TTL_MS });
-}
-
-async function streamCached(text: string, onToken: (chunk: string) => void): Promise<void> {
-  const words = text.split(/(\s+)/);
-  for (const w of words) {
-    if (w) onToken(w);
-    await new Promise((r) => setTimeout(r, 12));
+  console.log("[stats] ======================================\n");
+  for (const [key] of entries) {
+    providerStats.delete(key);
   }
 }
+
+// Log stats every 60 seconds
+setInterval(logProviderStats, 60_000);
 
 export function parseSpiceLevel(raw: unknown): SpiceLevel {
   if (raw === "flirty" || raw === "spicy" || raw === "explicit") return raw;
@@ -304,13 +332,10 @@ export const SUMMARIZE_TRIGGER = 15;
 // (only as fast as your own hardware) and only reachable when running on
 // the same machine as the app. It's the guaranteed floor, not the default.
 //
-// (Groq was removed from the chain — its Llama models are being deprecated
-// by Groq. If you still have GROQ_API_KEY set, it is ignored for chat;
-// it remains available for TTS voice playback only. Cerebras was also
-// removed because its free tier requires adding a payment method, which
-// doesn't fit a no-card-required setup.)
+// (Cerebras was removed because its free tier requires adding a payment
+// method, which doesn't fit a no-card-required setup.)
 //
-// Every hosted slot (NVIDIA, SambaNova) has its own circuit breaker
+// Every hosted slot (NVIDIA, SambaNova, Groq) has its own circuit breaker
 // (see circuitBreaker.ts): if a slot is rate-limited or hanging, we stop
 // paying for its timeout on every single request and skip it for a cooldown
 // window instead. Ollama doesn't get a breaker — it already checks
@@ -346,6 +371,7 @@ const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat", { cooldownS
 
 type Candidate = {
   name: string;
+  slot: number;
   breaker: ProviderBreaker | null;
   isAvailable: () => Promise<boolean> | boolean;
   stream: (messages: ChatMessage[], onToken: (chunk: string) => void, clientSignal?: AbortSignal, params?: GenParams) => Promise<string>;
@@ -360,23 +386,23 @@ function buildChain(params?: GenParams): Candidate[] {
   // Free-tier hosted providers — ordered by speed (fastest first)
   // -----------------------------------------------------------------------
   //
-  // Cerebras is first: offers 1M tokens/day free (no credit card), with
-  // gpt-oss-120b running at ~3000 tokens/sec. Despite only 5 RPM, it's
-  // kept first for testing because it's the most reliable free-tier
-  // provider with the highest daily volume and no credit card required.
-  // gpt-oss-120b is uncensored and best for roleplay/explicit content.
+  // Groq is first: added back temporarily for diagnosis. Previously removed
+  // because Groq deprecated llama-3.3-70b-versatile (its best uncensored
+  // model) and the replacement gpt-oss-120b has refusals baked in. The
+  // workaround is qwen/qwen3.6-27b, which is what we're diagnosing now.
+  // Kept first in the chain so logs clearly show whether Groq is answering
+  // or failing, without noise from other providers.
   //
   // SambaNova is second: fast (RDU hardware, ~2–4s typical) and serves raw
   // Meta Llama with no extra safety layer applied server-side, same as
-  // NVIDIA/Cerebras. This app supports an explicit/NSFW roleplay mode, and
-  // Llama goes along with mature fictional content far more readily than
-  // some hosted alternatives. Despite its restrictive 20 req/day free-tier
-  // limit, it's kept second because it's the fastest and best quality for
-  // the few requests it can handle.
+  // NVIDIA. This app supports an explicit/NSFW roleplay mode, and Llama
+  // goes along with mature fictional content far more readily than some
+  // hosted alternatives. Despite its restrictive 20 req/day free-tier limit,
+  // it's kept second because it's the fastest and best quality for the few
+  // requests it can handle.
   //
   // NVIDIA NIM is third: its free tier is solid but consistently slower to
-  // first token than SambaNova/Cerebras (observed 8–25s). Still useful for
-  // headroom.
+  // first token than SambaNova (observed 8–25s). Still useful for headroom.
   //
   // Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
   // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
@@ -396,6 +422,7 @@ function buildChain(params?: GenParams): Candidate[] {
     const breaker = groqBreakers[slot - 1];
     chain.push({
       name: breaker.name,
+      slot,
       breaker,
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamGroqChat(messages, onToken, key, GROQ_TIMEOUT_MS, clientSignal, params),
@@ -409,6 +436,7 @@ function buildChain(params?: GenParams): Candidate[] {
     const breaker = sambanovaBreakers[slot - 1];
     chain.push({
       name: breaker.name,
+      slot,
       breaker,
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
@@ -422,6 +450,7 @@ function buildChain(params?: GenParams): Candidate[] {
     const breaker = nvidiaBreakers[slot - 1];
     chain.push({
       name: breaker.name,
+      slot,
       breaker,
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamNvidiaChat(messages, onToken, key, NVIDIA_TIMEOUT_MS, clientSignal, params),
@@ -432,6 +461,7 @@ function buildChain(params?: GenParams): Candidate[] {
   if (isCloudflareChatConfigured()) {
     chain.push({
       name: cloudflareChatBreaker.name,
+      slot: 1,
       breaker: cloudflareChatBreaker,
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) =>
@@ -443,6 +473,7 @@ function buildChain(params?: GenParams): Candidate[] {
 
   chain.push({
     name: "ollama",
+    slot: 1,
     breaker: null,
     isAvailable: isOllamaAvailable,
     stream: (messages, onToken, clientSignal) => streamOllamaChat(messages, onToken, OLLAMA_TIMEOUT_MS, clientSignal, params),
@@ -476,18 +507,21 @@ async function attemptStream(
   const start = Date.now();
   try {
     const text = await candidate.stream(messages, onToken, clientSignal, params);
-    console.log(`[providers] ${candidate.name} answered in ${Date.now() - start}ms (total ${Date.now() - t0}ms)`);
+    const latency = Date.now() - start;
+    console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms)`);
     candidate.breaker?.reset();
+    recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
     return { text };
   } catch (err) {
+    const latency = Date.now() - start;
+    const wasRateLimited = isRateLimitError(err);
+    const wasTimeout = isTimeoutError(err);
     console.warn(`[providers] ${candidate.name} failed, falling back:`, err);
     if (candidate.breaker) {
-      if (isTimeoutError(err)) candidate.breaker.recordTimeout();
-      else if (isRateLimitError(err)) candidate.breaker.trip(err);
-      // Other error types (malformed response, 5xx, etc.) don't move the
-      // breaker — a single odd failure shouldn't take a healthy provider
-      // out of rotation for a whole cooldown window.
+      if (wasTimeout) candidate.breaker.recordTimeout();
+      else if (wasRateLimited) candidate.breaker.trip(err);
     }
+    recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     errors.push(`${candidate.name}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
@@ -513,13 +547,6 @@ export async function streamChatWithFallback(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<{ text: string; provider: string }> {
-  const key = cacheKey(messages, params);
-  const cached = getCached(key);
-  if (cached) {
-    await streamCached(cached, onToken);
-    return { text: cached, provider: "cache" };
-  }
-
   const chain = buildChain(params);
   const t0 = Date.now();
   const errors: string[] = [];
@@ -543,7 +570,6 @@ export async function streamChatWithFallback(
     const result = await attemptStream(candidate, messages, onToken, t0, errors, clientSignal, params);
     if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
     if (result && result.text.trim().length > 0) {
-      setCached(key, result.text);
       return { text: result.text, provider: candidate.name };
     }
     if (result) errors.push(`${candidate.name}: returned empty text`);
@@ -560,7 +586,6 @@ export async function streamChatWithFallback(
       const result = await attemptStream(candidate, messages, onToken, t0, errors, clientSignal, params);
       if (clientSignal?.aborted) return { text: result?.text ?? "", provider: candidate.name };
       if (result && result.text.trim().length > 0) {
-        setCached(key, result.text);
         return { text: result.text, provider: candidate.name };
       }
       if (result) errors.push(`${candidate.name}: returned empty text`);
@@ -580,18 +605,28 @@ export async function summarizeWithFallback(
   const chain = buildChain();
   for (const candidate of chain) {
     if (candidate.breaker?.isOpen()) continue;
+    let start = 0;
     try {
       const available = await candidate.isAvailable();
       if (!available) continue;
+      start = Date.now();
       const text = await candidate.complete(summaryMessages);
+      const latency = Date.now() - start;
       candidate.breaker?.reset();
-      if (text.trim()) return text.trim();
+      if (text.trim()) {
+        recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
+        return text.trim();
+      }
     } catch (err) {
+      const latency = start > 0 ? Date.now() - start : 0;
+      const wasRateLimited = isRateLimitError(err);
+      const wasTimeout = isTimeoutError(err);
       console.error(`[providers] ${candidate.name} summarization failed, falling back:`, err);
       if (candidate.breaker) {
-        if (isTimeoutError(err)) candidate.breaker.recordTimeout();
-        else if (isRateLimitError(err)) candidate.breaker.trip(err);
+        if (wasTimeout) candidate.breaker.recordTimeout();
+        else if (wasRateLimited) candidate.breaker.trip(err);
       }
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     }
   }
   return previousSummary;
@@ -723,24 +758,33 @@ export async function draftCharacterWithFallback(idea: string, allowExplicit = f
 
   for (const candidate of chain) {
     if (candidate.breaker?.isOpen()) continue;
+    let start = 0;
     try {
       const available = await candidate.isAvailable();
       if (!available) continue;
+      start = Date.now();
       const text = await candidate.complete(messages);
+      const latency = Date.now() - start;
       const draft = parseCharacterDraft(text);
       if (draft) {
         candidate.breaker?.reset();
+        recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
         return draft;
       }
-      // Valid response, just not parseable JSON — don't trip the breaker for
-      // this (it's not a provider failure), but do try the next provider.
+      const wasRateLimited = false;
+      const wasTimeout = false;
       errors.push(`${candidate.name}: response wasn't valid JSON`);
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     } catch (err) {
+      const latency = start > 0 ? Date.now() - start : 0;
+      const wasRateLimited = isRateLimitError(err);
+      const wasTimeout = isTimeoutError(err);
       console.error(`[providers] ${candidate.name} character draft failed, falling back:`, err);
       if (candidate.breaker) {
-        if (isTimeoutError(err)) candidate.breaker.recordTimeout();
-        else if (isRateLimitError(err)) candidate.breaker.trip(err);
+        if (wasTimeout) candidate.breaker.recordTimeout();
+        else if (wasRateLimited) candidate.breaker.trip(err);
       }
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
       errors.push(`${candidate.name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }

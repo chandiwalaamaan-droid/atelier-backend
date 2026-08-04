@@ -27,7 +27,7 @@ export function isGroqConfigured() {
  * Returns each configured key tagged with its original 1-based slot number
  * rather than its position in this filtered array — otherwise, if only
  * GROQ_API_KEY_2 is set, that key would end up at array index 0 and get
- * labeled "Grok #1" even though it's really the second key.
+ * labeled "Groq #1" even though it's really the second key.
  */
 export function getGroqKeys(): { key: string; slot: number }[] {
   return [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2]
