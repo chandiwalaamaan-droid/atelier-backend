@@ -53,6 +53,7 @@ export type GenParams = {
 
 interface ProviderStats {
   name: string;
+  slot: number;
   requests: number;
   rateLimitHits: number;
   timeoutHits: number;
@@ -62,14 +63,15 @@ interface ProviderStats {
 
 const providerStats = new Map<string, ProviderStats>();
 
-function getStatsKey(name: string) {
-  return name;
+function getStatsKey(name: string, slot: number) {
+  return `${name} #${slot}`;
 }
 
-function recordProviderRequest(name: string, success: boolean, latencyMs: number, wasRateLimited: boolean, wasTimeout: boolean) {
-  const key = getStatsKey(name);
+function recordProviderRequest(name: string, slot: number, success: boolean, latencyMs: number, wasRateLimited: boolean, wasTimeout: boolean) {
+  const key = getStatsKey(name, slot);
   const stats = providerStats.get(key) || {
     name,
+    slot,
     requests: 0,
     rateLimitHits: 0,
     timeoutHits: 0,
@@ -504,24 +506,14 @@ async function attemptStream(
   errors: string[],
   clientSignal?: AbortSignal,
   params?: GenParams
-): Promise<{ text: string } | null> {
+  ): Promise<{ text: string } | null> {
   const start = Date.now();
   try {
     const text = await candidate.stream(messages, onToken, clientSignal, params);
     const latency = Date.now() - start;
-    if (!text || text.trim().length === 0) {
-      const err = new Error(`${candidate.name} returned empty text`);
-      console.warn(`[providers] ${candidate.name} failed, falling back:`, err.message);
-      if (candidate.breaker) {
-        candidate.breaker.recordTimeout();
-      }
-      recordProviderRequest(candidate.name, false, latency, false, true);
-      errors.push(`${candidate.name}: returned empty text`);
-      return null;
-    }
     console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms)`);
     candidate.breaker?.reset();
-    recordProviderRequest(candidate.name, true, latency, false, false);
+    recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
     return { text };
   } catch (err) {
     const latency = Date.now() - start;
@@ -532,7 +524,7 @@ async function attemptStream(
       if (wasTimeout) candidate.breaker.recordTimeout();
       else if (wasRateLimited) candidate.breaker.trip(err);
     }
-    recordProviderRequest(candidate.name, false, latency, wasRateLimited, wasTimeout);
+    recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     errors.push(`${candidate.name}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
@@ -623,7 +615,7 @@ export async function summarizeWithFallback(
       const latency = Date.now() - start;
       candidate.breaker?.reset();
       if (text.trim()) {
-        recordProviderRequest(candidate.name, true, latency, false, false);
+        recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
         return text.trim();
       }
     } catch (err) {
@@ -635,7 +627,7 @@ export async function summarizeWithFallback(
         if (wasTimeout) candidate.breaker.recordTimeout();
         else if (wasRateLimited) candidate.breaker.trip(err);
       }
-      recordProviderRequest(candidate.name, false, latency, wasRateLimited, wasTimeout);
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     }
   }
   return previousSummary;
@@ -777,13 +769,13 @@ export async function draftCharacterWithFallback(idea: string, allowExplicit = f
       const draft = parseCharacterDraft(text);
       if (draft) {
         candidate.breaker?.reset();
-        recordProviderRequest(candidate.name, true, latency, false, false);
+        recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
         return draft;
       }
       const wasRateLimited = false;
       const wasTimeout = false;
       errors.push(`${candidate.name}: response wasn't valid JSON`);
-      recordProviderRequest(candidate.name, false, latency, wasRateLimited, wasTimeout);
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
     } catch (err) {
       const latency = start > 0 ? Date.now() - start : 0;
       const wasRateLimited = isRateLimitError(err);
@@ -793,7 +785,7 @@ export async function draftCharacterWithFallback(idea: string, allowExplicit = f
         if (wasTimeout) candidate.breaker.recordTimeout();
         else if (wasRateLimited) candidate.breaker.trip(err);
       }
-      recordProviderRequest(candidate.name, false, latency, wasRateLimited, wasTimeout);
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, wasRateLimited, wasTimeout);
       errors.push(`${candidate.name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
