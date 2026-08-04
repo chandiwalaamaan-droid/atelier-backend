@@ -18,19 +18,19 @@ export function isGroqConfigured() {
 }
 
 /**
- * The two configured Groq API keys, if any. A second key is optional —
- * ideally from a SEPARATE Groq account/signup, since most providers
- * enforce free-tier limits per account, not per key, so two keys from one
- * account may still share a single limit. Leave GROQ_API_KEY_2 unset to
- * just use one key; the slot is then simply left out of the fallback chain.
+ * The configured Groq API keys, if any. Up to 4 keys are supported —
+ * ideally from separate Groq accounts/signups, since most providers
+ * enforce free-tier limits per account, not per key. Leave
+ * GROQ_API_KEY_2/3/4 unset to just use one key; extra slots are then
+ * simply left out of the fallback chain.
  *
  * Returns each configured key tagged with its original 1-based slot number
  * rather than its position in this filtered array — otherwise, if only
- * GROQ_API_KEY_2 is set, that key would end up at array index 0 and get
- * labeled "Groq #1" even though it's really the second key.
+ * GROQ_API_KEY_3 is set, that key would end up at array index 0 and get
+ * labeled "Groq #1" even though it's really the third key.
  */
 export function getGroqKeys(): { key: string; slot: number }[] {
-  return [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2]
+  return [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3, process.env.GROQ_API_KEY_4]
     .map((key, i) => ({ key, slot: i + 1 }))
     .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
 }

@@ -9,20 +9,20 @@ export function isNvidiaConfigured() {
 }
 
 /**
- * Same idea as getSambanovaKeys()/getGroqKeys() — a second
- * key (NVIDIA_API_KEY_2) is optional, ideally from a separate
- * account/signup since free-tier limits are enforced per account, not per
- * key. Leave it unset to just use one key; that slot is then simply left
- * out of the chain.
+ * Same idea as getSambanovaKeys()/getGroqKeys() — additional keys
+ * (NVIDIA_API_KEY_2, NVIDIA_API_KEY_3) are optional, ideally from
+ * separate accounts/signups since free-tier limits are enforced per
+ * account, not per key. Leave any unset to just use the keys you have;
+ * unused slots are then simply left out of the chain.
  *
  * Returns each configured key tagged with its original 1-based slot number
- * (1 for NVIDIA_API_KEY, 2 for NVIDIA_API_KEY_2), not its position in this
- * filtered array — otherwise, if only NVIDIA_API_KEY_2 is set, that key
- * would end up at array index 0 and get labeled "NVIDIA #1" even though
- * it's really the second key.
+ * (1 for NVIDIA_API_KEY, 2 for NVIDIA_API_KEY_2, 3 for NVIDIA_API_KEY_3),
+ * not its position in this filtered array — otherwise, if only
+ * NVIDIA_API_KEY_3 is set, that key would end up at array index 0 and get
+ * labeled "NVIDIA #1" even though it's really the third key.
  */
 export function getNvidiaKeys(): { key: string; slot: number }[] {
-  return [process.env.NVIDIA_API_KEY, process.env.NVIDIA_API_KEY_2]
+  return [process.env.NVIDIA_API_KEY, process.env.NVIDIA_API_KEY_2, process.env.NVIDIA_API_KEY_3]
     .map((key, i) => ({ key, slot: i + 1 }))
     .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
 }

@@ -292,10 +292,10 @@ export const SUMMARIZE_TRIGGER = 15;
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Groq #1 -> Groq #2 -> SambaNova #1 -> SambaNova #2 ->
-//     NVIDIA #1 -> NVIDIA #2 -> Cloudflare Workers AI -> Ollama
+//     Groq #1 -> Groq #2 -> Groq #3 -> Groq #4 -> SambaNova #1 -> SambaNova #2 ->
+//     NVIDIA #1 -> NVIDIA #2 -> NVIDIA #3 -> Cloudflare Workers AI -> Ollama
 //
-// Cerebras #2 / NVIDIA #2 / SambaNova #2 are optional extra API keys
+// NVIDIA #2 / SambaNova #2 are optional extra API keys
 // (NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2) — ideally from separate
 // accounts, since most free-tier limits are enforced per account, not per
 // key. Leave any of them unset to just use one key for that provider; the
@@ -358,15 +358,18 @@ const OLLAMA_TIMEOUT_MS = envSeconds("OLLAMA_TIMEOUT_SECONDS", 30) * 1000;
 
 // Breakers are module-level singletons so their cooldown state persists
 // across requests (that's the entire point) — they must NOT be recreated
-// per-request. NVIDIA, SambaNova, and Groq each get two independent
+// per-request. NVIDIA, SambaNova, and Groq each get multiple independent
 // breakers, one per key slot, so key #1 getting rate-limited doesn't drag
 // key #2's breaker down with it.
 const nvidia1Breaker = new ProviderBreaker("NVIDIA #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const nvidia2Breaker = new ProviderBreaker("NVIDIA #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
+const nvidia3Breaker = new ProviderBreaker("NVIDIA #3", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "NVIDIA");
 const sambanova1Breaker = new ProviderBreaker("SambaNova #1", { cooldownSeconds: 300, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const sambanova2Breaker = new ProviderBreaker("SambaNova #2", { cooldownSeconds: 300, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "SAMBANOVA");
 const groq1Breaker = new ProviderBreaker("Groq #1", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const groq2Breaker = new ProviderBreaker("Groq #2", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
+const groq3Breaker = new ProviderBreaker("Groq #3", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
+const groq4Breaker = new ProviderBreaker("Groq #4", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "GROQ");
 const cloudflareChatBreaker = new ProviderBreaker("Cloudflare Chat", { cooldownSeconds: 60, timeoutTripThreshold: 2, timeoutCooldownSeconds: 20 }, "CLOUDFLARE_CHAT");
 
 type Candidate = {
@@ -417,7 +420,7 @@ function buildChain(params?: GenParams): Candidate[] {
   // -----------------------------------------------------------------------
 
   const groqKeys = getGroqKeys();
-  const groqBreakers = [groq1Breaker, groq2Breaker];
+  const groqBreakers = [groq1Breaker, groq2Breaker, groq3Breaker, groq4Breaker];
   groqKeys.forEach(({ key, slot }) => {
     const breaker = groqBreakers[slot - 1];
     chain.push({
@@ -445,7 +448,7 @@ function buildChain(params?: GenParams): Candidate[] {
   });
 
   const nvidiaKeys = getNvidiaKeys();
-  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker];
+  const nvidiaBreakers = [nvidia1Breaker, nvidia2Breaker, nvidia3Breaker];
   nvidiaKeys.forEach(({ key, slot }) => {
     const breaker = nvidiaBreakers[slot - 1];
     chain.push({

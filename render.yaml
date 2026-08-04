@@ -53,11 +53,17 @@ services:
         sync: false
       - key: GROQ_API_KEY_2
         sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: GROQ_API_KEY_4
+        sync: false
       - key: GROQ_MODEL
         value: "qwen/qwen3.6-27b"
       - key: NVIDIA_API_KEY
         sync: false
       - key: NVIDIA_API_KEY_2
+        sync: false
+      - key: NVIDIA_API_KEY_3
         sync: false
       - key: NVIDIA_MODEL
         value: "meta/llama-3.3-70b-instruct"
