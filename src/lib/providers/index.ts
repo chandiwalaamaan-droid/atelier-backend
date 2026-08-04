@@ -257,9 +257,12 @@ export function buildSystemPrompt(
     try {
       const parsed = JSON.parse(character.examples);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        // Cap per-line length too — this block is static cost paid on every
+        // single message for this character, so one long pasted example
+        // turn shouldn't get to inflate every request's input tokens.
         const lines = parsed.slice(0, 8).map((turn: { user?: string; character?: string }) => {
-          const userLine = typeof turn.user === "string" ? `User: ${turn.user}` : "";
-          const charLine = typeof turn.character === "string" ? `${character.name}: ${turn.character}` : "";
+          const userLine = typeof turn.user === "string" ? `User: ${turn.user.trim().slice(0, 300)}` : "";
+          const charLine = typeof turn.character === "string" ? `${character.name}: ${turn.character.trim().slice(0, 300)}` : "";
           return [userLine, charLine].filter(Boolean).join("\n");
         });
         examplesBlock = `Example conversations (match this tone and style):\n${lines.join("\n\n")}\n`;

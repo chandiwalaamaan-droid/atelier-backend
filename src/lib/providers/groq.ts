@@ -35,26 +35,40 @@ export function getGroqKeys(): { key: string; slot: number }[] {
     .filter((entry): entry is { key: string; slot: number } => Boolean(entry.key));
 }
 
-// Qwen's "thinking mode" reasoning tokens are wrapped in <think>...</think>
-// and, if not suppressed, get sent as regular content — which is what was
-// showing up inline in chat replies. reasoning_format: "hidden" tells Groq
-// to keep that reasoning server-side and only return the final answer. This
-// param is specific to Qwen models on Groq (gpt-oss models use a different
-// include_reasoning flag instead), so it's only sent when GROQ_MODEL is a
-// Qwen model — sending it for other models could cause a 400.
+// Qwen's "thinking mode" reasoning tokens are wrapped in <think>...</think>.
+// reasoning_format: "hidden" (below) only stops that text from being
+// returned — the model still generates it, and those tokens still count
+// against your TPD/TPM quota. reasoning_effort is the real fix: "none" is
+// documented by Groq as disabling reasoning outright for Qwen 3.6 27B
+// specifically ("default" is the other option, and is what re-enables it).
+// This app is casual roleplay dialogue, not math/coding, so there's no
+// quality reason to pay for chain-of-thought — Groq's own guidance is to
+// use non-thinking mode for "efficient, general-purpose dialogue" like
+// this. Restricted to exactly qwen/qwen3.6-27b since reasoning_effort's
+// accepted values differ per model family (gpt-oss takes low/medium/high
+// instead) and sending the wrong value can 400.
+// Override with GROQ_REASONING_EFFORT=default if you ever want thinking
+// mode back (e.g. testing a task that actually benefits from it).
 const IS_REASONING_MODEL = MODEL.startsWith("qwen/");
-const REASONING_EXTRA_BODY = IS_REASONING_MODEL ? { reasoning_format: "hidden" } : undefined;
+const SUPPORTS_REASONING_EFFORT = MODEL === "qwen/qwen3.6-27b";
+const REASONING_EFFORT = process.env.GROQ_REASONING_EFFORT === "default" ? "default" : "none";
+const REASONING_EXTRA_BODY = IS_REASONING_MODEL
+  ? {
+      reasoning_format: "hidden",
+      ...(SUPPORTS_REASONING_EFFORT ? { reasoning_effort: REASONING_EFFORT } : {}),
+    }
+  : undefined;
 
-// Reasoning models spend part of max_tokens on hidden <think>...</think>
-// chain-of-thought before any reply content comes out. The shared default
-// of 1024 (openaiCompatible.ts) is fine for plain chat models, but for a
-// reasoning model it's frequently not enough room for both the thinking and
-// the actual reply — the stream can end mid-<think>, in which case
-// thinkFilter discards everything and the completion comes back empty
-// (this was the root cause of Groq intermittently "answering" with
-// nothing). Give reasoning models a bigger budget. Override with
-// GROQ_MAX_TOKENS if 3072 still isn't enough headroom for heavier turns.
-const MAX_TOKENS = envInt("GROQ_MAX_TOKENS", IS_REASONING_MODEL ? 3072 : 1024);
+// With reasoning_effort="none" the model never spends budget on hidden
+// <think> tokens, so there's no reason to reserve the old 3072-token
+// cushion for it — that cushion was pure overhead being burned (and
+// counted against TPD) on every single reply. Only fall back to the
+// bigger budget if reasoning has been explicitly re-enabled via
+// GROQ_REASONING_EFFORT=default, where the old empty-completion failure
+// mode (stream ending mid-<think>) can recur. Override either way with
+// GROQ_MAX_TOKENS.
+const THINKING_ACTUALLY_ON = IS_REASONING_MODEL && (!SUPPORTS_REASONING_EFFORT || REASONING_EFFORT === "default");
+const MAX_TOKENS = envInt("GROQ_MAX_TOKENS", THINKING_ACTUALLY_ON ? 3072 : 1024);
 
 function envInt(name: string, def: number): number {
   const raw = process.env[name];
