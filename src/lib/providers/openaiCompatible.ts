@@ -164,6 +164,7 @@ export async function streamOpenAICompatibleChat(
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let rawText = "";
     let chunkTimer: ReturnType<typeof setTimeout> | null = null;
     const resetChunkTimer = () => {
       if (chunkTimer) clearTimeout(chunkTimer);
@@ -213,6 +214,7 @@ export async function streamOpenAICompatibleChat(
               firstTokenReceived = true;
               clearTimeout(timer);
             }
+            rawText += token;
             const visible = thinkFilter.feed(token);
             if (visible) {
               fullText += visible;
@@ -227,6 +229,13 @@ export async function streamOpenAICompatibleChat(
       if (remainder) {
         fullText += remainder;
         onToken(remainder);
+      }
+
+      if (!fullText.trim() && rawText.trim()) {
+        const fallback = stripThinkTags(rawText);
+        if (fallback.trim()) {
+          fullText = fallback.trim();
+        }
       }
 
       return fullText;
