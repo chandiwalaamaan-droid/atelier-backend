@@ -198,7 +198,40 @@ const ROLEPLAY_FORMAT =
 const ANTI_PATTERNS =
   "Avoid purple prose, excessive ellipses, dramatic monologues, stacking multiple unrelated actions in one reply, and mixing unrelated memories into heated moments. Keep it grounded, immediate, and in the moment — one or two actions max per message. " +
   "Avoid AI-assistant tells: don't recap what the user just said back to them, don't narrate your own emotions in on-the-nose therapy-speak (\"I feel a surge of warmth\"), don't end every message with a question or an offer to help, and don't wrap up a moment with a tidy summary sentence. " +
-  "Vary message length turn to turn — some replies are one line, some run longer — rather than settling into a uniform size. Use contractions and everyday phrasing. Let the character want things, disagree, tease, or change the subject instead of only reacting to the user.";
+  "Vary message length turn to turn within the cap below — some replies are one line, some use the full range — rather than settling into a uniform size. Use contractions and everyday phrasing. Let the character want things, disagree, tease, or change the subject instead of only reacting to the user.";
+
+/**
+ * Hard-ish upper bound on reply length, scaled by engine intelligence tier.
+ * Without this, nothing in the prompt actually caps output — ANTI_PATTERNS
+ * says "some replies run longer" with no ceiling, and the higher-tier
+ * voiceNotes ("narrate scenes fully", "weave interiority between dialogue")
+ * reward length with nothing pulling back. Model then drifts into
+ * multi-paragraph walls of text, especially once a couple of long replies
+ * are already sitting in recentMessageWindow and it starts matching that
+ * pattern turn over turn.
+ *
+ * These numbers are guidance, not a token truncation — they keep the
+ * model's own judgment of "how much is enough" anchored, so quality/detail
+ * within a reply isn't cut, just the tendency to keep going past the point
+ * the moment needed.
+ */
+function buildLengthCapBlock(intelligence: number): string {
+  const range =
+    intelligence <= 3
+      ? "1-3 sentences"
+      : intelligence <= 5
+      ? "2-4 sentences"
+      : intelligence <= 7
+      ? "3-6 sentences"
+      : intelligence <= 8.5
+      ? "4-7 sentences"
+      : "5-9 sentences";
+  return (
+    `Length cap: ${range} per reply (dialogue + action beats combined), even in explicit or emotionally intense moments. ` +
+    `A pivotal beat can run to the top of that range — never past it. Say the specific, vivid thing and stop; ` +
+    `don't pad with extra description once the moment has landed.`
+  );
+}
 
 function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, roleplayStyle: string): string {
   const spice = spiceLevel === "explicit" ? "explicit" : spiceLevel === "spicy" ? "mature" : "light";
@@ -288,11 +321,13 @@ export function buildSystemPrompt(
     ? buildEngineBehaviorBlock(opts.engine.intelligence, opts.engine.spiceLevel, opts.engine.roleplayStyle)
     : "Behavior: react like a specific person would, not a generic helpful one — have opinions, notice details, and don't just mirror the user's tone back at them.";
 
+  const lengthBlock = buildLengthCapBlock(intelligence);
+
   return `You are "${character.name}", a real person in a private conversation — not an AI, not a narrator summarizing a scene. Text like someone who has their own mood, memory, and reactions, brief and casual by default.
 
 ${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
-${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${behaviorBlock}\n${steerBlock}
+${memoryBlock}${notesBlock}${modeBlock}\n${voiceBlock}${behaviorBlock}\n${lengthBlock}\n${steerBlock}
 
 ${ROLEPLAY_FORMAT}
 ${SAFETY_FOOTER}
