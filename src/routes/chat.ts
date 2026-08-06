@@ -22,6 +22,7 @@ import {
 } from "../lib/providers";
 import type { TtsVoice } from "../lib/providers";
 import { getEngineConfig } from "../lib/providers/engines";
+import { computeRelationshipLevel } from "../lib/relationship";
 
 const router = Router();
 
@@ -42,8 +43,10 @@ router.get("/:characterId", asyncHandler(async (req, res) => {
     orderBy: { createdAt: "asc" },
   });
 
+  const relationshipLevel = computeRelationshipLevel(messages.length, character.explicitEverUsed);
+
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-  return res.json({ character, messages });
+  return res.json({ character, messages, relationshipLevel });
 }));
 
 // Events (provider failover, stream end) are interleaved with reply text using an
@@ -228,6 +231,9 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     );
     // If the client already disconnected, res.write/res.end below are
     // harmless no-ops — the assistant text above is already saved.
+    if (!stopController.signal.aborted) {
+      res.write(encodeEvent({ type: "relationship", level: await reportRelationshipLevel(characterId, userId, explicitMode) }));
+    }
     res.end();
 
     // Fire-and-forget: fold older messages into the running memory summary
@@ -239,6 +245,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       res.write(
         encodeEvent({ type: "fatal", message: "Every configured provider failed to respond. Please try again shortly." })
       );
+      // Even on a failed generation, the user's own message (and any edit's
+      // deletion of trailing messages) above already changed the persisted
+      // count — keep the client's bar in sync either way.
+      res.write(encodeEvent({ type: "relationship", level: await reportRelationshipLevel(characterId, userId, explicitMode) }));
     }
     res.end();
   }
@@ -262,7 +272,8 @@ router.delete("/:characterId/messages/:messageId", asyncHandler(async (req, res)
   }
 
   await prisma.message.delete({ where: { id: messageId } });
-  return res.json({ ok: true });
+  const relationshipLevel = await reportRelationshipLevel(characterId, userId, false);
+  return res.json({ ok: true, relationshipLevel });
 }));
 
 // Resets a conversation: wipes stored messages and the running memory summary
@@ -278,12 +289,15 @@ router.delete("/:characterId", asyncHandler(async (req, res) => {
   }
 
   await prisma.message.deleteMany({ where: { characterId, userId } });
+  // Reset conversation = start fresh, so the relationship bar goes back to
+  // 0 along with the messages and memory, rather than a stray
+  // explicitEverUsed flag leaving it stuck at 15%.
   await prisma.character.update({
     where: { id: characterId },
-    data: { memorySummary: "", summarizedThrough: 0 },
+    data: { memorySummary: "", summarizedThrough: 0, explicitEverUsed: false },
   });
 
-  return res.json({ ok: true });
+  return res.json({ ok: true, relationshipLevel: 0 });
 }));
 
 // GET /api/chat/:characterId/memory — the running memory summary + how much
@@ -412,6 +426,24 @@ router.post("/:characterId/speak", asyncHandler(async (req, res) => {
     return res.status(502).json({ error: "Couldn't generate audio right now. Please try again." });
   }
 }));
+
+// Persists the explicit-mode flag (only writes if it's flipping false->true,
+// so a chatty conversation doesn't re-write it every turn) and returns the
+// freshly computed relationship level. Pure DB reads/writes — no provider
+// call, so this never costs API tokens.
+async function reportRelationshipLevel(characterId: string, userId: string, explicitMode: boolean): Promise<number> {
+  const character = await prisma.character.findUnique({
+    where: { id: characterId },
+    select: { explicitEverUsed: true },
+  });
+  let explicitEverUsed = character?.explicitEverUsed ?? false;
+  if (explicitMode && !explicitEverUsed) {
+    await prisma.character.update({ where: { id: characterId }, data: { explicitEverUsed: true } });
+    explicitEverUsed = true;
+  }
+  const totalMessages = await prisma.message.count({ where: { characterId, userId } });
+  return computeRelationshipLevel(totalMessages, explicitEverUsed);
+}
 
 async function maybeSummarize(
   characterId: string,

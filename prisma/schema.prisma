@@ -108,6 +108,13 @@ model Character {
   isPublic           Boolean   @default(false) // shared to the discovery gallery for other users to remix
   flagCount          Int       @default(0) // number of open reports filed against this character
   isHidden           Boolean   @default(false) // auto-hidden from Discover pending moderation review, or hidden by an admin
+  // Whether this user has ever sent a message to this character with explicit
+  // mode on. Persists the relationship-level "explicit" bonus historically —
+  // see computeRelationshipLevel() — instead of the old frontend-only
+  // heuristic that re-derived it from the *current* toggle state on every
+  // render (so it changed retroactively whenever the user flipped the
+  // toggle, and reset on reload/another device since it was never stored).
+  explicitEverUsed   Boolean   @default(false)
   createdAt          DateTime  @default(now())
   messages           Message[]
   reports            Report[]
