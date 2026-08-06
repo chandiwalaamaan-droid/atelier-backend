@@ -88,7 +88,13 @@ function parseCharacterInput(body: unknown): { data?: CharacterInput; error?: st
     ? String(raw.accentColor)
     : "#c9a227";
   const isExplicit = raw.isExplicit === true;
-  const isPublic = (raw.isPublic === true) && !isExplicit;
+  // Explicit characters CAN be shared publicly — /discover already gates
+  // them server-side behind ?nsfw=1, which the client only ever sends once
+  // the person has explicitly turned on the 18+ toggle (see explore/page.tsx).
+  // So a public+explicit character simply never appears to a viewer who
+  // hasn't opted in, the same way a private character never appears to
+  // anyone but its owner.
+  const isPublic = raw.isPublic === true;
   const roleplayNotes = isExplicit ? clean(raw.roleplayNotes) : "";
   const avatarPrompt = cleanPrompt(raw.avatarPrompt);
   const scenePromptTemplate = cleanPrompt(raw.scenePromptTemplate);
@@ -259,9 +265,10 @@ router.post("/import", asyncHandler(async (req, res) => {
   // character can reach the public Discover gallery. Checked once up front
   // (rather than per-item) since it depends only on the requesting user.
   // Bulk import intentionally never hard-fails the whole batch over this —
-  // any entry requesting isPublic gets silently downgraded to private, same
-  // as how isExplicit already forces isPublic off, and the user is told so
-  // in the response instead of losing the rest of the batch.
+  // any entry requesting isPublic gets silently downgraded to private, and
+  // the user is told so in the response instead of losing the rest of the
+  // batch. Explicit characters are no longer excluded from this — they can
+  // be public too, gated at read time by /discover's ?nsfw=1 param.
   const canPublish = !(await enforceVerifiedForPublic(userId, true));
 
   const created: Awaited<ReturnType<typeof prisma.character.create>>[] = [];
@@ -297,9 +304,10 @@ router.post("/import", asyncHandler(async (req, res) => {
 }));
 
 // GET /api/characters/discover — public gallery of characters shared by any
-// user. By default only non-explicit ("SFW") characters are returned; pass
-// ?nsfw=1 to also include explicit ones. This is the server-side half of the
-// homepage's NSFW toggle — the client sends ?nsfw=1 only once the person has
+// user. Two separate galleries, not one filtered list: by default only
+// non-explicit ("SFW") characters are returned; pass ?nsfw=1 to switch to
+// the explicit gallery instead. This is the server-side half of the
+// homepage's 18+ toggle — the client sends ?nsfw=1 only once the person has
 // switched it on, so explicit content never reaches a browser that hasn't
 // asked for it.
 // NOTE: this must be registered before GET "/:id" below, or Express will
@@ -310,6 +318,8 @@ router.get("/discover", asyncHandler(async (req, res) => {
 
   const includeExplicit = req.query.nsfw === "1" || req.query.nsfw === "true";
 
+  // Two separate galleries, not layered: the 18+ toggle switches from SFW to
+  // explicit rather than adding explicit on top of SFW.
   const explicitFilter = includeExplicit ? { isExplicit: true } : { isExplicit: false };
 
   const characters = await prisma.character.findMany({
@@ -353,7 +363,9 @@ router.put("/:id", asyncHandler(async (req, res) => {
   const accentColor = /^#[0-9a-fA-F]{6}$/.test(body.accentColor) ? body.accentColor : existing.accentColor;
   const isExplicit = typeof body.isExplicit === "boolean" ? body.isExplicit : existing.isExplicit;
   const requestedPublic = typeof body.isPublic === "boolean" ? body.isPublic : existing.isPublic;
-  const isPublic = requestedPublic && !isExplicit;
+  // Same as parseCharacterInput above — explicit no longer forces private,
+  // /discover's ?nsfw=1 gate handles visibility instead.
+  const isPublic = requestedPublic;
   const roleplayNotes = isExplicit
     ? clean(body.roleplayNotes, existing.roleplayNotes ?? "")
     : "";
