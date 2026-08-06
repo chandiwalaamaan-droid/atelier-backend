@@ -108,7 +108,7 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 
 const server = app.listen(PORT, () => {
-  console.log(`[atelier-backend] listening on :${PORT}`);
+  console.log(`[rolichat-backend] listening on :${PORT}`);
 });
 server.on("error", (err: any) => {
   if (err.code === "EADDRINUSE") {
@@ -123,14 +123,14 @@ server.on("error", (err: any) => {
 // deploy/restart. Close the server so in-flight requests are allowed to
 // complete rather than being cut off mid-stream.
 process.on("SIGTERM", () => {
-  console.log("[atelier-backend] SIGTERM received — shutting down gracefully");
+  console.log("[rolichat-backend] SIGTERM received — shutting down gracefully");
   server.close(() => {
-    console.log("[atelier-backend] server closed");
+    console.log("[rolichat-backend] server closed");
     process.exit(0);
   });
   // Hard-stop after 10 seconds in case close() hangs.
   setTimeout(() => {
-    console.error("[atelier-backend] forced shutdown after timeout");
+    console.error("[rolichat-backend] forced shutdown after timeout");
     process.exit(1);
   }, 10_000);
 });

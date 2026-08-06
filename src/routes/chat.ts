@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Prisma } from "@prisma/client";
 import { asyncHandler } from "../lib/asyncHandler";
 import { prisma } from "../lib/db";
 import { getCurrentUserId } from "../lib/auth";
@@ -132,7 +133,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     if (positionAmongAll <= character.summarizedThrough) {
       return res.status(400).json({ error: "That message is too old to edit." });
     }
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.$executeRaw`SELECT id FROM "Message" WHERE id = ${target.id} FOR UPDATE`;
       await tx.message.deleteMany({
         where: { characterId, userId, createdAt: { gt: target.createdAt } },

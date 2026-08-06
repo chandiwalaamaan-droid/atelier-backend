@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: atelier-backend
+    name: rolichat-backend
     runtime: node
     plan: free
     healthCheckPath: /api/health

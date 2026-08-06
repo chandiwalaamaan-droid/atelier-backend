@@ -41,13 +41,13 @@ async function sendInactivityWarnings(frontendUrl: string) {
     try {
       await sendMail(
         user.email,
-        "Your Atelier account will be deleted in 30 days due to inactivity",
+        "Your Rolichat account will be deleted in 30 days due to inactivity",
         `<p>Hi ${user.displayName},</p>
-         <p>We haven't seen you on Atelier in a while. To keep your account, characters, and
+         <p>We haven't seen you on Rolichat in a while. To keep your account, characters, and
          chat history, just log in any time in the next 30 days: <a href="${frontendUrl}">${frontendUrl}</a></p>
          <p>If we don't hear from you, your account and data will be permanently removed
          (this cannot be undone).</p>`,
-        `Hi ${user.displayName}, your Atelier account has been inactive and will be deleted in 30 days ` +
+        `Hi ${user.displayName}, your Rolichat account has been inactive and will be deleted in 30 days ` +
           `unless you log in: ${frontendUrl}`
       );
       await prisma.user.update({
@@ -86,7 +86,7 @@ async function anonymizeInactiveAccounts() {
         prisma.user.update({
           where: { id: user.id },
           data: {
-            email: `deleted-${user.id}@atelier.invalid`,
+            email: `deleted-${user.id}@rolichat.invalid`,
             passwordHash: "DELETED_ACCOUNT",
             displayName: "Deleted user",
             emailVerified: false,
@@ -107,7 +107,7 @@ async function anonymizeInactiveAccounts() {
 }
 
 export async function runRetentionCleanup() {
-  const frontendUrl = (process.env.FRONTEND_URL || "").split(",")[0]?.trim() || "https://atelier.app";
+  const frontendUrl = (process.env.FRONTEND_URL || "").split(",")[0]?.trim() || "https://rolichat.app";
   const warned = await sendInactivityWarnings(frontendUrl);
   const anonymized = await anonymizeInactiveAccounts();
   console.log(`[retention] sent ${warned} warning email(s), anonymized ${anonymized} account(s)`);

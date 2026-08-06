@@ -94,7 +94,7 @@ function timingSafeEqualHex(a: string, b: string): boolean {
 //
 // The client sends a pack/tier ID and this catalog decides the price; the
 // client never gets to say how much to charge. Keep these in sync with the
-// frontend's display copy in atelier-frontend-main/lib/premium.ts — this
+// frontend's display copy in rolichat-frontend-main/lib/premium.ts — this
 // file is what's actually charged, that one is what's shown before payments
 // are live. Amounts are in paise (1 INR = 100 paise), Razorpay's native unit.
 //

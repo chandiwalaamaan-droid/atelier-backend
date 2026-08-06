@@ -1,4 +1,4 @@
-// 50 Premium SFW Characters for Atelier
+// 50 Premium SFW Characters for Rolichat
 // Each character is unique, handcrafted, and designed for immersive roleplay.
 // Import via POST /api/characters/import or use as STARTER_TEMPLATES.
 // All characters are SFW (isExplicit: false).

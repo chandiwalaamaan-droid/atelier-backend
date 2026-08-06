@@ -1,8 +1,8 @@
-# Atelier — backend (Express API, deploy to Render)
+# Rolichat — backend (Express API, deploy to Render)
 
-[![CI](https://github.com/chandiwalaamaan-droid/atelier-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/chandiwalaamaan-droid/atelier-backend/actions/workflows/ci.yml)
+[![CI](https://github.com/chandiwalaamaan-droid/rolichat-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/chandiwalaamaan-droid/rolichat-backend/actions/workflows/ci.yml)
 
-This is the API half of Atelier, split out from the original combined Next.js
+This is the API half of Rolichat, split out from the original combined Next.js
 app so the frontend can be deployed separately on Netlify. It's a plain
 Express + TypeScript app — no Next.js in here at all.
 
@@ -61,7 +61,7 @@ from the original app.
      but you need at least one, or Ollama running locally)
    - `PAYMENTS_ENABLED`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
      `RAZORPAY_WEBHOOK_SECRET` — optional, for the Razorpay billing scaffold
-     (spark packs + Atelier+ membership checkout). Everything in
+     (spark packs + Rolichat+ membership checkout). Everything in
      `src/routes/billing.ts` 503s unless `PAYMENTS_ENABLED=true` — leave it
      unset/`false` for now. See `src/lib/payments/razorpay.ts` for what's
      needed to actually go live later.
@@ -116,7 +116,7 @@ authenticated request (debounced to once per 6h per user — see
    - `FRONTEND_URL` — your Netlify URL (comma-separated for multiple)
    - `SESSION_SECRET` — any long random string (Render can generate one)
 
-6. **Deploy the backend first.** Note the Render URL (e.g. `https://atelier-api.onrender.com`).
+6. **Deploy the backend first.** Note the Render URL (e.g. `https://rolichat-api.onrender.com`).
 
 7. **Deploy the frontend** to Netlify and set `NEXT_PUBLIC_API_URL` to your Render URL.
 

@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import { Router } from "express";
 import { OAuth2Client } from "google-auth-library";
+import multer from "multer";
+import sharp from "sharp";
 import { asyncHandler } from "../lib/asyncHandler";
 import { prisma } from "../lib/db";
 import {
@@ -13,8 +15,18 @@ import {
 } from "../lib/auth";
 import { checkRateLimit, getClientIp } from "../lib/rateLimit";
 import { sendMail } from "../lib/mailer";
+import { uploadAvatarBuffer } from "../lib/b2";
 
 const router = Router();
+
+const ALLOWED_AVATAR_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_AVATAR_BYTES } });
 
 const MINIMUM_AGE_YEARS = 18;
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -41,7 +53,7 @@ function validateNewAccountFields(displayName: string, birthdateRaw: string, tos
   const birthdate = birthdateRaw ? new Date(birthdateRaw) : null;
   if (!birthdate || Number.isNaN(birthdate.getTime())) return { error: "Enter your date of birth." };
   if (birthdate.getTime() > Date.now()) return { error: "That date of birth is in the future." };
-  if (calculateAge(birthdate) < MINIMUM_AGE_YEARS) return { error: "You must be 18 or older to use Atelier." };
+  if (calculateAge(birthdate) < MINIMUM_AGE_YEARS) return { error: "You must be 18 or older to use Rolichat." };
   if (!tosAccepted) return { error: "You must accept the Terms of Service and Content Policy to continue." };
   return { birthdate };
 }
@@ -71,8 +83,8 @@ async function issueEmailVerification(userId: string, email: string, frontendUrl
   const link = `${frontendUrl}/verify-email?token=${raw}`;
   await sendMail(
     email,
-    "Verify your Atelier email",
-    `<p>Confirm this is your email address to finish setting up your Atelier account.</p><p><a href="${link}">${link}</a></p><p>This link expires in 24 hours.</p>`,
+    "Verify your Rolichat email",
+    `<p>Confirm this is your email address to finish setting up your Rolichat account.</p><p><a href="${link}">${link}</a></p><p>This link expires in 24 hours.</p>`,
     `Verify your email: ${link} (expires in 24 hours)`
   );
 }
@@ -110,7 +122,7 @@ router.post("/register", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "That date of birth is in the future." });
   }
   if (calculateAge(birthdate) < MINIMUM_AGE_YEARS) {
-    return res.status(403).json({ error: "You must be 18 or older to use Atelier." });
+    return res.status(403).json({ error: "You must be 18 or older to use Rolichat." });
   }
   if (!tosAccepted) {
     return res.status(400).json({ error: "You must accept the Terms of Service and Content Policy to continue." });
@@ -158,7 +170,7 @@ router.post("/register", asyncHandler(async (req, res) => {
 // (found by a previously-linked googleId, or by matching email — Google has
 // already verified that email, so it's safe to link it to a password
 // account with the same address). If no account exists yet, we deliberately
-// do NOT create one here: Atelier requires a self-reported date of birth
+// do NOT create one here: Rolichat requires a self-reported date of birth
 // and ToS acceptance at signup (18+ content gate), neither of which Google
 // gives us. Instead this responds with isNewUser so the frontend can show a
 // short "finish your profile" step that posts to /google/complete.
@@ -363,9 +375,105 @@ router.get("/me", asyncHandler(async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, displayName: true, emailVerified: true },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      emailVerified: true,
+      username: true,
+      highlights: true,
+      avatarUrl: true,
+      explicitMode: true,
+      blurExplicitImages: true,
+      defaultModel: true,
+      preferredLanguage: true,
+    },
   });
   return res.json({ user });
+}));
+
+// PUT /api/auth/me — update the signed-in user's profile fields.
+router.put("/me", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const body = req.body ?? {};
+  const displayName = typeof body.displayName === "string" ? body.displayName.trim() : undefined;
+  const username = typeof body.username === "string" ? body.username.trim() : undefined;
+  const highlights = typeof body.highlights === "string" ? body.highlights.trim() : undefined;
+  const explicitMode = typeof body.explicitMode === "boolean" ? body.explicitMode : undefined;
+  const blurExplicitImages = typeof body.blurExplicitImages === "boolean" ? body.blurExplicitImages : undefined;
+  const defaultModel = typeof body.defaultModel === "string" ? body.defaultModel.trim() : undefined;
+  const preferredLanguage = typeof body.preferredLanguage === "string" ? body.preferredLanguage.trim() : undefined;
+
+  if (username !== undefined && username.length > 0) {
+    const existing = await prisma.user.findFirst({
+      where: { username: username, NOT: { id: userId } },
+    });
+    if (existing) {
+      return res.status(409).json({ error: "That username is already taken." });
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(username !== undefined ? { username } : {}),
+      ...(highlights !== undefined ? { highlights } : {}),
+      ...(explicitMode !== undefined ? { explicitMode } : {}),
+      ...(blurExplicitImages !== undefined ? { blurExplicitImages } : {}),
+      ...(defaultModel !== undefined ? { defaultModel } : {}),
+      ...(preferredLanguage !== undefined ? { preferredLanguage } : {}),
+    },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      emailVerified: true,
+      username: true,
+      highlights: true,
+      avatarUrl: true,
+      explicitMode: true,
+      blurExplicitImages: true,
+      defaultModel: true,
+      preferredLanguage: true,
+    },
+  });
+
+  return res.json({ user: updated });
+}));
+
+// POST /api/auth/avatar — upload a profile avatar image for the signed-in user.
+router.post("/avatar", avatarUpload.single("avatar"), asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: "No image file was sent." });
+  }
+  if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.mimetype)) {
+    return res.status(400).json({ error: "Use a PNG, JPEG, WebP, or GIF image." });
+  }
+
+  const publicId = `user-${userId}-${Date.now()}`;
+  const avatarUrl = await uploadAvatarBuffer(file.buffer, publicId);
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { avatarUrl },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      emailVerified: true,
+      username: true,
+      highlights: true,
+      avatarUrl: true,
+    },
+  });
+
+  return res.json({ user: updated });
 }));
 
 // POST /api/auth/forgot-password — always responds 200 with the same message
@@ -394,7 +502,7 @@ router.post("/forgot-password", asyncHandler(async (req, res) => {
     const link = `${frontendUrl}/reset-password?token=${raw}`;
     await sendMail(
       user.email,
-      "Reset your Atelier password",
+      "Reset your Rolichat password",
       `<p>Someone requested a password reset for this account. If that was you, set a new password:</p><p><a href="${link}">${link}</a></p><p>This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>`,
       `Reset your password: ${link} (expires in 1 hour; ignore if you didn't request this)`
     ).catch((err) => console.error("Failed to send reset email:", err));

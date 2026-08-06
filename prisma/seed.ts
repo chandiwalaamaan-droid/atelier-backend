@@ -55,15 +55,15 @@ async function main() {
   );
 
   let seedUser = await prisma.user.findUnique({
-    where: { email: "seed@atelier.local" },
+    where: { email: "seed@rolichat.local" },
   });
 
   if (!seedUser) {
     seedUser = await prisma.user.create({
       data: {
-        email: "seed@atelier.local",
+        email: "seed@rolichat.local",
         passwordHash: await bcrypt.hash("seed-password-123", 10),
-        displayName: "Atelier Seed",
+        displayName: "Rolichat Seed",
         birthdate: new Date("1990-01-01"),
         tosAcceptedAt: new Date(),
         emailVerified: true,

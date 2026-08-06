@@ -27,7 +27,7 @@ function getTransporter() {
 
 export async function sendMail(to: string, subject: string, html: string, text: string) {
   const t = getTransporter();
-  const from = process.env.MAIL_FROM || "Atelier <no-reply@atelier.local>";
+  const from = process.env.MAIL_FROM || "Rolichat <no-reply@rolichat.local>";
 
   if (!t) {
     // Dev fallback — no SMTP configured. Print the email so whoever's

@@ -9,7 +9,7 @@ import { getClient, getBucketName } from "../lib/b2";
 // background URLs still just work as plain <img src> URLs for the frontend.
 //
 // The key is url-encoded on write (see uploadAvatarBuffer in ../lib/b2) and
-// contains slashes ("atelier/avatars/xyz.png"), so we use a wildcard param
+// contains slashes ("rolichat/avatars/xyz.png"), so we use a wildcard param
 // and decode it ourselves rather than relying on a single :key segment.
 const router = Router();
 
