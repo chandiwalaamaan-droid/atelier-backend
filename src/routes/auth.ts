@@ -445,6 +445,19 @@ router.put("/me", asyncHandler(async (req, res) => {
   return res.json({ user: updated });
 }));
 
+// DELETE /api/auth/me — permanently delete the signed-in user's account.
+// Relies on cascading deletes (see schema.prisma) to clean up owned
+// characters, chats, messages, and reports.
+router.delete("/me", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  await prisma.user.delete({ where: { id: userId } });
+
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+}));
+
 // POST /api/auth/avatar — upload a profile avatar image for the signed-in user.
 router.post("/avatar", avatarUpload.single("avatar"), asyncHandler(async (req, res) => {
   const userId = await getCurrentUserId(req);
