@@ -1,12 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { characters as sfwCharacters } from "../sfw-premium-characters-with-assets";
-import * as fs from "fs";
-import * as path from "path";
+import { darkTabooCharacters } from "../dark-taboo-characters-with-assets";
 
 const prisma = new PrismaClient();
-
-const CHARACTERS_JSON_PATH = path.resolve(__dirname, "../dark-taboo-characters.json");
 
 interface SeedCharacter {
   name: string;
@@ -22,13 +19,24 @@ interface SeedCharacter {
 }
 
 async function main() {
-  let jsonCharacters: SeedCharacter[] = [];
-  try {
-    const raw = fs.readFileSync(CHARACTERS_JSON_PATH, "utf-8");
-    jsonCharacters = JSON.parse(raw) as SeedCharacter[];
-  } catch (err) {
-    console.warn(`[seed] Could not load ${CHARACTERS_JSON_PATH}: ${err instanceof Error ? err.message : err}. Continuing with SFW characters only.`);
-  }
+  // dark-taboo-characters.json (the old plain-JSON source) has no avatarUrl/
+  // backgroundUrl fields at all, which is why every explicit character was
+  // being seeded with null avatar/background - the generated
+  // dark-taboo-characters-with-assets.ts file next to it already has the
+  // correct asset paths (and matching files under public/assets/characters/
+  // on the frontend), it just was never wired in here. Use that instead.
+  const jsonCharacters: SeedCharacter[] = darkTabooCharacters.map((c) => ({
+    name: c.name,
+    tagline: c.tagline,
+    avatarEmoji: c.avatarEmoji,
+    accentColor: c.accentColor,
+    personality: c.personality,
+    backstory: c.backstory,
+    greeting: c.greeting,
+    isExplicit: c.isExplicit,
+    avatarUrl: c.avatarUrl,
+    backgroundUrl: c.backgroundUrl,
+  }));
 
   const sfwSeedCharacters: SeedCharacter[] = sfwCharacters.map((c) => ({
     name: c.name,
