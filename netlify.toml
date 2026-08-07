@@ -1,0 +1,23 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Set NEXT_PUBLIC_API_URL in the Netlify dashboard (Site configuration >
+# Environment variables) to your deployed Render backend's URL, e.g.
+# https://rolichat-backend.onrender.com — it must be set at build time since
+# NEXT_PUBLIC_* vars are baked into the client bundle.
+#
+# NEXT_PUBLIC_RAZORPAY_KEY_ID — optional, only needed once billing goes live
+# (see the backend README's "Turning on billing (Razorpay) later"). Leave
+# unset for now; lib/premium.ts's PREMIUM_PAYMENTS_ENABLED=false keeps every
+# buy/subscribe button disabled regardless.
+#
+# NEXT_PUBLIC_GOOGLE_CLIENT_ID — "Sign in with Google" OAuth 2.0 Client ID
+# (type "Web application") from Google Cloud Console > APIs & Services >
+# Credentials. Must be the SAME client ID as the backend's GOOGLE_CLIENT_ID.
+# Add this site's Netlify URL under "Authorized JavaScript origins" on that
+# credential. Leave unset to hide the Google button entirely (password
+# login/signup still works).
