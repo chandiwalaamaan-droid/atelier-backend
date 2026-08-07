@@ -29,6 +29,52 @@ const router = Router();
 
 const MAX_MESSAGE_LENGTH = 4000;
 
+// POST /api/chat/bulk-delete — wipes conversation history (messages + memory)
+// for a set of characters, or for every character the user owns, in one go.
+// This mirrors the existing DELETE /:characterId "reset conversation"
+// behavior but scoped to many characters at once, so the "manage chat
+// history" screen can offer per-chat checkboxes plus a "delete all" option
+// without needing N round trips. Characters themselves are never touched —
+// only their messages/memory — same as the single-chat reset.
+//
+// IMPORTANT: this must stay registered before the generic
+// `POST /:characterId` route below, or Express would match "/bulk-delete"
+// as characterId="bulk-delete" and try to send a chat message instead.
+router.post("/bulk-delete", asyncHandler(async (req, res) => {
+  const userId = await getCurrentUserId(req);
+  if (!userId) return res.status(401).json({ error: "Not signed in." });
+
+  const body = req.body ?? {};
+  const all = body.all === true;
+  const requestedIds: string[] = Array.isArray(body.characterIds)
+    ? body.characterIds.filter((id: unknown): id is string => typeof id === "string")
+    : [];
+
+  if (!all && requestedIds.length === 0) {
+    return res.status(400).json({ error: "Select at least one chat to delete, or pass all: true." });
+  }
+
+  // Only ever touch characters the caller actually owns — requestedIds is
+  // client-supplied, so this scoping is what keeps it safe.
+  const owned = await prisma.character.findMany({
+    where: all ? { ownerId: userId } : { ownerId: userId, id: { in: requestedIds } },
+    select: { id: true },
+  });
+  const ownedIds = owned.map((c: { id: string }) => c.id);
+
+  if (ownedIds.length === 0) {
+    return res.json({ ok: true, deletedCount: 0 });
+  }
+
+  await prisma.message.deleteMany({ where: { characterId: { in: ownedIds }, userId } });
+  await prisma.character.updateMany({
+    where: { id: { in: ownedIds } },
+    data: { memorySummary: "", summarizedThrough: 0, explicitEverUsed: false },
+  });
+
+  return res.json({ ok: true, deletedCount: ownedIds.length });
+}));
+
 router.get("/:characterId", asyncHandler(async (req, res) => {
   const userId = await getCurrentUserId(req);
   if (!userId) return res.status(401).json({ error: "Not signed in." });
