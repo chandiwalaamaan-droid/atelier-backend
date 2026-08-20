@@ -1,0 +1,11 @@
+-- Same root cause as 20260807000000_add_profile_settings: schema.prisma's
+-- User model has had `avatarUrl` (set by POST /api/auth/avatar in
+-- routes/auth.ts) since before that migration was written, but it was
+-- missed from that pass too — the previous fix only covered the six
+-- explicitly-listed profile-settings fields and overlooked this one, which
+-- lives right next to them in the model. Verified by diffing every model in
+-- schema.prisma against the columns actually created across all of
+-- prisma/migrations/*/migration.sql: this was the only remaining gap,
+-- anywhere, in any table.
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "avatarUrl" TEXT;
