@@ -122,12 +122,20 @@ model Character {
   // render (so it changed retroactively whenever the user flipped the
   // toggle, and reset on reload/another device since it was never stored).
   explicitEverUsed   Boolean   @default(false)
+  // Set when this character was created via POST /:id/remix from another
+  // public character. The remix is a full independent copy (see that route)
+  // — this FK is purely for lineage/attribution ("Based on X by Y", remix
+  // counts on Discover), never dereferenced for prompt/memory data.
+  remixOfId          String?
+  remixOf            Character?  @relation("Remixes", fields: [remixOfId], references: [id], onDelete: SetNull)
+  remixes            Character[] @relation("Remixes")
   createdAt          DateTime  @default(now())
   messages           Message[]
   reports            Report[]
 
   @@index([ownerId])
   @@index([isPublic])
+  @@index([remixOfId])
 }
 
 model Message {

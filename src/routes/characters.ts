@@ -330,10 +330,46 @@ router.get("/discover", asyncHandler(async (req, res) => {
     },
     orderBy: { createdAt: "desc" },
     take: 60,
-    include: { owner: { select: { displayName: true } } },
+    include: {
+      owner: { select: { displayName: true } },
+      // Real remix count — replaces the frontend's fabricated pseudoViews()
+      // and is also the strongest available "this character is good" signal
+      // in a template/remix product (more direct than raw message volume,
+      // since messages happen on the *remix*, not the original).
+      _count: { select: { remixes: true } },
+    },
   });
 
-  return res.json({ characters });
+  // Recent message activity per character, for trending. Counted on the
+  // last 7 days only so trending reflects current activity, not lifetime
+  // volume. Queried separately since Message doesn't roll up via `include`
+  // with a date filter.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentActivity = await prisma.message.groupBy({
+    by: ["characterId"],
+    where: {
+      characterId: { in: characters.map((c) => c.id) },
+      createdAt: { gte: sevenDaysAgo },
+    },
+    _count: { _all: true },
+  });
+  const recentMessageCounts = new Map(recentActivity.map((r) => [r.characterId, r._count._all]));
+
+  const now = Date.now();
+  const withStats = characters.map((c) => {
+    const remixCount = c._count.remixes;
+    const recentMessages = recentMessageCounts.get(c.id) ?? 0;
+    const ageDays = (now - c.createdAt.getTime()) / (24 * 60 * 60 * 1000);
+    // Simple trend score: recent chat activity weighted highest (it's the
+    // freshest signal), remixes next (durable "this template is worth
+    // using" signal), with a mild penalty for older listings so nothing
+    // camps at the top forever on stale numbers.
+    const trendScore = recentMessages * 3 + remixCount * 10 - Math.min(ageDays, 30) * 0.5;
+    const { _count, ...rest } = c;
+    return { ...rest, remixCount, trendScore };
+  });
+
+  return res.json({ characters: withStats });
 }));
 
 router.get("/:id", asyncHandler(async (req, res) => {
@@ -447,6 +483,7 @@ router.post("/:id/remix", asyncHandler(async (req, res) => {
       examples: source.examples,
       tags: source.tags,
       isPublic: false, // the remix starts private; the user can choose to share their own copy later
+      remixOfId: source.id, // lineage only — this row is otherwise a fully independent copy
     },
   });
 
