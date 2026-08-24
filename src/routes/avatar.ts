@@ -6,7 +6,6 @@ import { getCurrentUserId } from "../lib/auth";
 import sharp from "sharp";
 import { uploadAvatarBuffer } from "../lib/b2";
 import { generateCloudflareImage, isCloudflareConfigured } from "../lib/providers/cloudflare";
-import { generateHuggingFaceImage, isHuggingFaceConfigured } from "../lib/providers/huggingface";
 import { generateDicebearAvatar } from "../lib/providers/dicebear";
 import { acquireImageGenSlot, releaseImageGenSlot, ImageGenJobData, ImageGenJobResult } from "../lib/imageQueue";
 import { ProviderBreaker, isRateLimitError, isTimeoutError } from "../lib/providers/circuitBreaker";
@@ -34,7 +33,6 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 const POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt";
 
 const pollinationsBreaker = new ProviderBreaker("Pollinations", { cooldownSeconds: 30, timeoutTripThreshold: 2, timeoutCooldownSeconds: 15 }, "POLLINATIONS");
-const huggingFaceBreaker = new ProviderBreaker("HuggingFace", { cooldownSeconds: 30, timeoutTripThreshold: 2, timeoutCooldownSeconds: 15 }, "HUGGINGFACE");
 
 async function withPollinationsRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let lastErr: unknown;
@@ -228,33 +226,26 @@ export async function processImageGen(data: ImageGenJobData): Promise<ImageGenJo
       : () => withPollinationsRetry(() => generatePollinationsBackground(isExplicit, prompt, timeoutMs));
 
     // Ordered priority chain, not a race: each provider is tried in turn
-    // and the first success wins. Explicit ordering (rather than
-    // Promise.any) still matters even though every provider here is
-    // free — it keeps latency predictable and means a provider that's
-    // currently unhealthy (circuit breaker open) gets skipped instantly
-    // instead of being raced against and wasting a request against it.
+    // and the first success wins.
     //
-    // Gemini has been removed entirely (2026-08-24): its image models
-    // returned a hard `limit: 0` free-tier quota for this project on
-    // every model tested (flux-3.1, 2.5-flash-image, etc.) — not
-    // ordinary rate-limiting, but zero free-tier allocation, meaning it
-    // would never succeed without linking billing. Rather than pay for
-    // billing on a provider that was only ever meant to be free, it's
-    // dropped from the chain and Hugging Face takes the "best effort
-    // first" slot instead.
+    // Gemini was removed (2026-08-24): its image models returned a hard
+    // `limit: 0` free-tier quota for this project on every model tested
+    // — not ordinary rate-limiting, but zero free-tier allocation,
+    // meaning it would never succeed without linking billing.
     //
-    // Order is the same for SFW and NSFW content: Hugging Face first
-    // (open-weight models, generally no extra provider-side content
-    // filter beyond what's baked into the checkpoint itself), then
-    // Pollinations (the provider actually configured for uncensored
-    // output when isExplicit), then Cloudflare as the last real AI
-    // option. If all three fail, DiceBear guarantees an avatar still
-    // gets generated — see the fallback below.
-    const huggingFaceAttempt: ProviderAttempt = {
-      name: "huggingface",
-      run: () => generateHuggingFaceImage(prompt, timeoutMs),
-      breaker: huggingFaceBreaker,
-    };
+    // Hugging Face was tried and then removed the same day: its
+    // Inference Providers routing for image models proved unusable via
+    // raw HTTP calls in testing — every documented URL/provider
+    // combination (hf-inference, fal-ai path routing, the unified
+    // /v1/images/generations endpoint with a model:provider suffix)
+    // either 410'd, 400'd with "Model not supported by provider X", or
+    // 404'd outright. Their own docs route developers through the
+    // huggingface_hub client library specifically because it handles
+    // this model-to-provider translation internally — it isn't a stable
+    // public REST contract yet, so it isn't worth depending on here.
+    //
+    // Current chain: Pollinations, then Cloudflare, then (avatars only)
+    // a guaranteed DiceBear fallback — see below.
     const pollinationsAttempt: ProviderAttempt = {
       name: "pollinations",
       run: pollinationsFn,
@@ -265,15 +256,11 @@ export async function processImageGen(data: ImageGenJobData): Promise<ImageGenJo
       run: () => generateCloudflareImage(prompt, timeoutMs),
     };
 
-    const chain: ProviderAttempt[] = [huggingFaceAttempt, pollinationsAttempt, cloudflareAttempt];
+    const chain: ProviderAttempt[] = [pollinationsAttempt, cloudflareAttempt];
 
     const errors: string[] = [];
 
     for (const attempt of chain) {
-      if (attempt.name === "huggingface" && !isHuggingFaceConfigured()) {
-        errors.push("huggingface: not configured");
-        continue;
-      }
       if (attempt.name === "cloudflare" && !isCloudflareConfigured()) {
         errors.push("cloudflare: not configured");
         continue;
