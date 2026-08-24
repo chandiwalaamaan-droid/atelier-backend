@@ -340,30 +340,56 @@ router.get("/discover", asyncHandler(async (req, res) => {
     },
   });
 
-  // Recent message activity per character, for trending. Counted on the
-  // last 7 days only so trending reflects current activity, not lifetime
-  // volume. Queried separately since Message doesn't roll up via `include`
-  // with a date filter.
+  // Recent message activity per character, for trending. Because this product
+  // is template/remix-based, chats happen on the *remix* rows, not the
+  // original template. Walk the full remix tree (any depth) and aggregate
+  // descendant messages back to their root template so trendScore reflects
+  // actual template popularity. Queried separately since Message doesn't
+  // roll up via `include` with a date filter.
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const rootMap = new Map<string, string>();
+  const toVisit = [...characters.map((c) => c.id)];
+  const visited = new Set<string>(characters.map((c) => c.id));
+  for (const id of characters.map((c) => c.id)) {
+    rootMap.set(id, id);
+  }
+
+  while (toVisit.length > 0) {
+    const batch = toVisit.splice(0);
+    const remixes = await prisma.character.findMany({
+      where: { remixOfId: { in: batch } },
+      select: { id: true, remixOfId: true },
+    });
+    for (const remix of remixes) {
+      if (visited.has(remix.id)) continue;
+      visited.add(remix.id);
+      rootMap.set(remix.id, rootMap.get(remix.remixOfId!)!);
+      toVisit.push(remix.id);
+    }
+  }
+
+  const allIds = Array.from(visited);
   const recentActivity = await prisma.message.groupBy({
     by: ["characterId"],
     where: {
-      characterId: { in: characters.map((c) => c.id) },
+      characterId: { in: allIds },
       createdAt: { gte: sevenDaysAgo },
     },
     _count: { _all: true },
   });
-  const recentMessageCounts = new Map(recentActivity.map((r) => [r.characterId, r._count._all]));
+
+  const templateMessageCounts = new Map<string, number>();
+  for (const activity of recentActivity) {
+    const rootId = rootMap.get(activity.characterId) ?? activity.characterId;
+    templateMessageCounts.set(rootId, (templateMessageCounts.get(rootId) ?? 0) + activity._count._all);
+  }
 
   const now = Date.now();
   const withStats = characters.map((c) => {
     const remixCount = c._count.remixes;
-    const recentMessages = recentMessageCounts.get(c.id) ?? 0;
+    const recentMessages = templateMessageCounts.get(c.id) ?? 0;
     const ageDays = (now - c.createdAt.getTime()) / (24 * 60 * 60 * 1000);
-    // Simple trend score: recent chat activity weighted highest (it's the
-    // freshest signal), remixes next (durable "this template is worth
-    // using" signal), with a mild penalty for older listings so nothing
-    // camps at the top forever on stale numbers.
     const trendScore = recentMessages * 3 + remixCount * 10 - Math.min(ageDays, 30) * 0.5;
     const { _count, ...rest } = c;
     return { ...rest, remixCount, trendScore };
