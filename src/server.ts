@@ -53,11 +53,29 @@ const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Netlify deploy previews and branch deploys are served from
+// "<build-hash-or-branch>--<site-name>.netlify.app" rather than the site's
+// primary domain, and the hash changes on every deploy — so it can't be
+// pinned in FRONTEND_URL. If FRONTEND_URL (or NETLIFY_SITE_NAME) points at
+// a "*.netlify.app" site, also allow any preview/branch deploy of that
+// same site via regex.
+const netlifySiteNames = new Set<string>();
+for (const url of [...allowedOrigins, process.env.NETLIFY_SITE_NAME].filter(
+  (v): v is string => Boolean(v)
+)) {
+  const match = url.match(/(?:^|\/\/)(?:[a-z0-9-]+--)?([a-z0-9-]+)\.netlify\.app$/i);
+  if (match) netlifySiteNames.add(match[1]);
+}
+const netlifyPreviewPattern = netlifySiteNames.size
+  ? new RegExp(`^https://[a-z0-9-]+--(${[...netlifySiteNames].join("|")})\\.netlify\\.app$`, "i")
+  : null;
+
 app.use(
   cors({
     origin(origin, callback) {
       // Allow no-origin requests (curl, server-to-server health checks).
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      if (netlifyPreviewPattern && netlifyPreviewPattern.test(origin)) return callback(null, true);
       return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
     credentials: true,
