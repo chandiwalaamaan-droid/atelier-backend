@@ -165,9 +165,12 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // SambaNova, Cloudflare, Ollama — is unaffected); every other engine, and
   // manual/no-engine requests, keep the default NVIDIA-first order. See
   // buildChain's comment in providers/index.ts for the full chain order.
+  // explicitMode reorders the chain for NSFW chats: Groq -> SambaNova ->
+  // Cloudflare -> NVIDIA -> Ollama, so NVIDIA only answers NSFW as a last
+  // resort. SFW chats use the default NVIDIA-first chain.
   const genParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, preferGroqFirst: engine.id === "hazelnut" }
-    : undefined;
+    ? { temperature: engine.temperature, topP: engine.topP, preferGroqFirst: engine.id === "hazelnut", explicitMode }
+    : { explicitMode };
   const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =

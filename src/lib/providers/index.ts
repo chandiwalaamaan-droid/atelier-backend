@@ -61,6 +61,11 @@ export type GenParams = {
    * NVIDIA-first order for every other engine/tier and for non-chat calls
    * (summarization, character drafting). */
   preferGroqFirst?: boolean;
+  /** When true, the chain is reordered for NSFW/explicit chats: Groq first,
+   * then SambaNova, Cloudflare, NVIDIA last before Ollama. When false/undefined,
+   * the default SFW order applies: NVIDIA first, then Groq, SambaNova,
+   * Cloudflare, Ollama. */
+  explicitMode?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -963,10 +968,11 @@ function buildChain(params?: GenParams): Candidate[] {
   // -----------------------------------------------------------------------
 
   // NVIDIA and Groq candidates are built up front, then pushed in whichever
-  // order this request wants — NVIDIA-first by default (see the header
-  // comment above), or Groq-first when params.preferGroqFirst is set. Only
-  // these two swap places; SambaNova/Cloudflare/Ollama below always come
-  // after both regardless of order, unchanged from before this existed.
+  // order this request wants — SFW (NVIDIA-first) by default, or NSFW/
+  // explicit (Groq-first, NVIDIA pushed to last before Ollama) when
+  // params.explicitMode is set. SambaNova/Cloudflare below always come
+  // after the NVIDIA/Groq pair in SFW mode, or between Groq and NVIDIA in
+  // NSFW mode. Ollama is always last either way.
   const nvidiaCandidates: Candidate[] = getNvidiaKeys().map(({ key, slot }) => {
     const breaker = [nvidia1Breaker, nvidia2Breaker, nvidia3Breaker][slot - 1];
     return {
@@ -991,25 +997,27 @@ function buildChain(params?: GenParams): Candidate[] {
     };
   });
 
-  if (params?.preferGroqFirst) {
-    chain.push(...groqCandidates, ...nvidiaCandidates);
-  } else {
-    chain.push(...nvidiaCandidates, ...groqCandidates);
-  }
-
   const sambanovaKeys = getSambanovaKeys();
   const sambanovaBreakers = [sambanova1Breaker, sambanova2Breaker];
-  sambanovaKeys.forEach(({ key, slot }) => {
+  const sambanovaCandidates: Candidate[] = sambanovaKeys.map(({ key, slot }) => {
     const breaker = sambanovaBreakers[slot - 1];
-    chain.push({
+    return {
       name: breaker.name,
       slot,
       breaker,
       isAvailable: () => true,
       stream: (messages, onToken, clientSignal) => streamSambanovaChat(messages, onToken, key, SAMBANOVA_TIMEOUT_MS, clientSignal, params),
       complete: (messages) => completeSambanovaChat(messages, key, SAMBANOVA_TIMEOUT_MS, params),
-    });
+    };
   });
+
+  if (params?.explicitMode) {
+    // NSFW/explicit: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
+    chain.push(...groqCandidates, ...sambanovaCandidates);
+  } else {
+    // SFW (default): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
+    chain.push(...nvidiaCandidates, ...groqCandidates, ...sambanovaCandidates);
+  }
 
   if (isCloudflareChatConfigured()) {
     chain.push({
@@ -1022,6 +1030,11 @@ function buildChain(params?: GenParams): Candidate[] {
       complete: (messages) =>
         completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
     });
+  }
+
+  if (params?.explicitMode) {
+    // NSFW: NVIDIA comes after Cloudflare, just before Ollama
+    chain.push(...nvidiaCandidates);
   }
 
   chain.push({
