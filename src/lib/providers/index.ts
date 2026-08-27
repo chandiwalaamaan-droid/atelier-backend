@@ -280,11 +280,11 @@ function stripLeakedMeta(text: string): string {
  * when guidance alone doesn't hold.
  */
 function lengthCapRange(intelligence: number): { min: number; max: number } {
-  if (intelligence <= 3) return { min: 1, max: 3 };
-  if (intelligence <= 5) return { min: 2, max: 4 };
-  if (intelligence <= 7) return { min: 3, max: 6 };
-  if (intelligence <= 8.5) return { min: 4, max: 7 };
-  return { min: 5, max: 9 };
+  if (intelligence <= 3) return { min: 1, max: 2 };
+  if (intelligence <= 5) return { min: 1, max: 3 };
+  if (intelligence <= 7) return { min: 2, max: 4 };
+  if (intelligence <= 8.5) return { min: 2, max: 5 };
+  return { min: 3, max: 6 };
 }
 
 /**
@@ -454,11 +454,11 @@ export function getLengthCeiling(intelligence: number): number {
  * internal default, so without this the local fallback could generate
  * indefinitely. */
 export function maxTokensForIntelligence(intelligence: number): number {
-  if (intelligence <= 3) return 128;
-  if (intelligence <= 5) return 192;
-  if (intelligence <= 7) return 256;
-  if (intelligence <= 8.5) return 320;
-  return 448;
+  if (intelligence <= 3) return 96;
+  if (intelligence <= 5) return 128;
+  if (intelligence <= 7) return 192;
+  if (intelligence <= 8.5) return 256;
+  return 320;
 }
 
 /**
