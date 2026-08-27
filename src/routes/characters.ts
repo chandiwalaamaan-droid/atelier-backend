@@ -146,10 +146,15 @@ router.get("/", asyncHandler(async (req, res) => {
   // dashboard can show a preview + "last active" time without an N+1 query
   // per card.
   const latest: LatestRow[] = await prisma.$queryRaw`
-    SELECT DISTINCT ON ("characterId") "characterId", "content", "role", "createdAt"
-    FROM "Message"
-    WHERE "userId" = ${userId}
-    ORDER BY "characterId", "createdAt" DESC
+    SELECT m.characterId, m.content, m.role, m.createdAt
+    FROM Message AS m
+    JOIN (
+      SELECT characterId, MAX(createdAt) AS maxCreatedAt
+      FROM Message
+      WHERE userId = ${userId}
+      GROUP BY characterId
+    ) AS latest ON m.characterId = latest.characterId AND m.createdAt = latest.maxCreatedAt
+    WHERE m.userId = ${userId}
   `;
   const latestByCharacter = new Map<string, LatestRow>(latest.map((m: LatestRow) => [m.characterId, m]));
 

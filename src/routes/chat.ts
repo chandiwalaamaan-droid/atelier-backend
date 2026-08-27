@@ -208,7 +208,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       return res.status(400).json({ error: "That message is too old to edit." });
     }
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.$executeRaw`SELECT id FROM "Message" WHERE id = ${target.id} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM \`Message\` WHERE id = ${target.id} FOR UPDATE`;
       await tx.message.deleteMany({
         where: { characterId, userId, createdAt: { gt: target.createdAt } },
       });

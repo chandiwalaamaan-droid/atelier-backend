@@ -235,12 +235,12 @@ async function applyPaidOrder(orderId: string, razorpayPaymentId: string) {
       referenceId: string;
       billingCycle: string | null;
       status: string;
-    }[]>`
-      SELECT id, "userId", kind, "referenceId", "billingCycle", status
-      FROM "PaymentOrder"
-      WHERE id = ${orderId}
-      FOR UPDATE
-    `;
+     }[]>`
+       SELECT id, \`userId\`, kind, \`referenceId\`, \`billingCycle\`, status
+       FROM \`PaymentOrder\`
+       WHERE id = ${orderId}
+       FOR UPDATE
+     `;
     const lockedOrder = order[0];
     if (!lockedOrder || lockedOrder.status === "paid") return;
 

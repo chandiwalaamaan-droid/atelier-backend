@@ -11,7 +11,7 @@ services:
     startCommand: "npm run start"
     envVars:
       - key: DATABASE_URL
-        sync: false # set this to your CockroachDB Serverless connection string in the Render dashboard
+         sync: false # set this to your TiDB Cloud Serverless connection string in the Render dashboard
       - key: SESSION_SECRET
         generateValue: true
       # "Sign in with Google" — OAuth 2.0 Client ID (type "Web application")
