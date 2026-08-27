@@ -49,7 +49,7 @@ export async function streamSambanovaChat(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params), params?.maxTokens ?? 1024);
 }
 
 export async function completeSambanovaChat(
@@ -58,5 +58,5 @@ export async function completeSambanovaChat(
   timeoutMs: number,
   params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params), params?.maxTokens ?? 1024);
 }

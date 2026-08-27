@@ -14,6 +14,7 @@ function genParamsOptions(params?: GenParams): Record<string, unknown> | undefin
   const options: Record<string, unknown> = {};
   if (params?.temperature !== undefined) options.temperature = params.temperature;
   if (params?.topP !== undefined) options.top_p = params.topP;
+  if (params?.maxTokens !== undefined) options.num_predict = params.maxTokens;
   return Object.keys(options).length ? options : undefined;
 }
 

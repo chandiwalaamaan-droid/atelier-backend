@@ -28,6 +28,7 @@ import {
   enforceActionCap,
   enforceLengthCeiling,
   actionCapForIntelligence,
+  maxTokensForIntelligence,
 } from "../lib/providers";
 import type { TtsVoice } from "../lib/providers";
 import { resolveEngineForTier, type MembershipTier } from "../lib/providers/engines";
@@ -168,9 +169,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // explicitMode reorders the chain for NSFW chats: Groq -> SambaNova ->
   // Cloudflare -> NVIDIA -> Ollama, so NVIDIA only answers NSFW as a last
   // resort. SFW chats use the default NVIDIA-first chain.
+  const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, preferGroqFirst: engine.id === "hazelnut", explicitMode }
-    : { explicitMode };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, preferGroqFirst: engine.id === "hazelnut", explicitMode }
+    : { maxTokens, explicitMode };
   const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =

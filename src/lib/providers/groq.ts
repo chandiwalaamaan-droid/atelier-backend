@@ -91,7 +91,7 @@ export async function streamGroqChat(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params), MAX_TOKENS);
+  return streamOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params), params?.maxTokens ?? MAX_TOKENS);
 }
 
 export async function completeGroqChat(
@@ -100,7 +100,7 @@ export async function completeGroqChat(
   timeoutMs: number,
   params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params), MAX_TOKENS);
+  return completeOpenAICompatibleChat(BASE_URL, apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params), params?.maxTokens ?? MAX_TOKENS);
 }
 
 // ---------------------------------------------------------------------------

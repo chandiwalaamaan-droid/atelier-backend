@@ -50,7 +50,7 @@ export async function streamCloudflareChat(
   clientSignal?: AbortSignal,
   params?: GenParams
 ): Promise<string> {
-  return streamOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params));
+  return streamOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, onToken, timeoutMs, clientSignal, genParamsExtraBody(params), params?.maxTokens ?? 1024);
 }
 
 export async function completeCloudflareChat(
@@ -59,5 +59,5 @@ export async function completeCloudflareChat(
   timeoutMs: number,
   params?: GenParams
 ): Promise<string> {
-  return completeOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params));
+  return completeOpenAICompatibleChat(baseUrl(), apiKey, MODEL, messages, timeoutMs, genParamsExtraBody(params), params?.maxTokens ?? 1024);
 }
