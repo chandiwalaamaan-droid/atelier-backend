@@ -1,1 +1,0 @@
-ALTER TABLE "Character" ADD COLUMN IF NOT EXISTS "explicitEverUsed" BOOLEAN NOT NULL DEFAULT false;
