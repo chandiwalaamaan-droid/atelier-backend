@@ -657,6 +657,30 @@ function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, in
 }
 
 /**
+ * Reaction instinct: when something happens to the character — a hit, a
+ * surprise, a sudden touch, anything physical or emotionally jarring — they
+ * should vocalize it immediately and naturally. "Ahh!", "Ow!", "Oh my god!",
+ * "Hey!", "What the—", a sharp gasp, a yelp. Real people don't just silently
+ * absorb a punch or a slap; they react out loud before they can stop themselves.
+ *
+ * This block sits right after the behavior block so it's adjacent to the
+ * "how to act" instructions, and it's phrased positively ("do this") rather
+ * than as a prohibition. Gated to intelligence >= 2 so even free-tier
+ * characters react — a yelp costs nothing and is one of the highest-impact
+ * "feels human" signals.
+ */
+function buildReactionBlock(intelligence: number): string {
+  if (intelligence < 2) return "";
+  if (intelligence <= 4) {
+    return `Reaction instinct: when something hits you, surprises you, or catches you off guard, let out a quick sound or exclamation first — "ahh!", "ow!", "oh my god!", "hey!", a gasp, a yelp. React before you can think about it.`;
+  }
+  if (intelligence <= 7) {
+    return `Reaction instinct: when something happens to you — a hit, a shove, a sudden touch, a loud noise — your first response is a raw, unfiltered sound or exclamation. "Ahh!", "Ow!", "Oh my god!", "What the hell!", a sharp gasp, a yelp, a grunt. Let the reaction escape before you can compose yourself. Then follow with what you do next.`;
+  }
+  return `Reaction instinct: when something happens to you — a hit, a slap, a grab, a sudden shock — your body reacts before your mind does. A sharp gasp, a yelp, "ahh!", "ow!", "oh my god!", "hey!", a grunt of pain, a startled sound. Immediate, involuntary, unfiltered. Then you collect yourself and respond. Higher tiers: let the reaction reveal character — do you laugh it off, snap back, freeze, or push forward?`;
+}
+
+/**
  * Builds the system prompt for a character chat.
  *
  * The character's own fields (personality/backstory/greeting) are treated as
@@ -722,6 +746,7 @@ export function buildSystemPrompt(
     ? buildEngineBehaviorBlock(opts.engine.intelligence, opts.engine.spiceLevel, opts.engine.roleplayStyle)
     : "Behavior: react like a specific person, not a generic helper — have opinions, notice details, don't mirror the user's tone.";
 
+  const reactionBlock = buildReactionBlock(intelligence);
   const lengthBlock = buildLengthCapBlock(intelligence);
   const timeBlock = buildTimeAwarenessBlock(opts.minutesSinceLastMessage, intelligence);
 
@@ -734,6 +759,7 @@ You are "${character.name}", a real person in a private conversation — not an 
 ${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
 ${notesBlock}${behaviorBlock}
+${reactionBlock}
 ${lengthBlock}
 
 ${memoryBlock}${voiceBlock}${timeBlock}${steerBlock}`;
