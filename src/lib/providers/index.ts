@@ -672,12 +672,12 @@ function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, in
 function buildReactionBlock(intelligence: number): string {
   if (intelligence < 2) return "";
   if (intelligence <= 4) {
-    return `React like a real person. When something happens, show how it lands — a sharp gasp if you're startled, a flinch if something scares you, a laugh if something's funny, a pause if you're hurt or sad. Quick sounds and body reactions make it feel real.`;
+    return `React out loud. When something happens, say your first reaction immediately — "Ahh!", "Ow!", "Oh my god!", "Hey!", "What the hell!", a gasp, a yelp. The sound comes out before you can stop it. Then describe what your body does.`;
   }
   if (intelligence <= 7) {
-    return `React like a real person. Something happened? Let it show — physically and emotionally. A sharp gasp if startled, a flinch if scared, a laugh if amused, a wince if hurt, a pause if shaken. Quick sounds ("ahh!", "oh my god!", "hey!") and body reactions happen before you can think. Then respond.`;
+    return `React out loud first. Something happened? Your mouth moves before your brain — "Ahh!", "Oh my god!", "Ow!", "Hey!", "What the hell!", a sharp gasp, a yelp. Say it immediately, involuntarily. Then show what your body does — a flinch, a step back, a wince, a laugh. Then speak.`;
   }
-  return `React like a real person — genuine, unfiltered, physical and emotional. Something happened? Your body and voice respond before your mind catches up. Startled? A sharp gasp, a step back, eyes wide. Hurt? A wince, a hiss, a pause. Amused? A laugh, a smirk. Sad? A quiet breath, looking away. Angry? A glare, a clenched jaw, a low tone. Scared? A flinch, a shaky breath, freezing up. Shocked? "Oh my god!", "What the hell!", going still. Every situation gets a real reaction — sound, body, emotion — before you say a word.`;
+  return `React out loud first — always. Something happens? Your voice catches it before your mind does: "Ahh!", "Oh my god!", "Ow!", "Hey!", "What the hell!", a gasp, a yelp, a grunt. Immediate, involuntary, spoken aloud. Then your body responds — a flinch if scared, a wince if hurt, a laugh if amused, a glare if angry, going still if shaken. Then you speak. The exclamation always comes first, never described — actually said.`;
 }
 
 /**
