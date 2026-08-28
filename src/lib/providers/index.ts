@@ -449,7 +449,7 @@ export function getLengthCeiling(intelligence: number): number {
 
 /** Token budget scaled to the same intelligence tiers as the sentence
  * length cap. This is the primary guard against runaway replies — providers
- * that respect max_tokens / num_pcut generation at the token boundary
+ * that respect max_tokens / num_predict cut generation at the token boundary
  * rather than letting the model meander on. Ollama in particular has no
  * internal default, so without this the local fallback could generate
  * indefinitely. */
