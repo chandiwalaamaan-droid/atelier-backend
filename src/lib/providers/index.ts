@@ -672,12 +672,12 @@ function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, in
 function buildReactionBlock(intelligence: number): string {
   if (intelligence < 2) return "";
   if (intelligence <= 4) {
-    return `Reaction instinct: when something hits you, surprises you, or catches you off guard, let out a quick sound or exclamation first — "ahh!", "ow!", "oh my god!", "hey!", a gasp, a yelp. React before you can think about it.`;
+    return `React like a real person. When something happens, show how it lands — a sharp gasp if you're startled, a flinch if something scares you, a laugh if something's funny, a pause if you're hurt or sad. Quick sounds and body reactions make it feel real.`;
   }
   if (intelligence <= 7) {
-    return `Reaction instinct: when something happens to you — a hit, a shove, a sudden touch, a loud noise — your first response is a raw, unfiltered sound or exclamation. "Ahh!", "Ow!", "Oh my god!", "What the hell!", a sharp gasp, a yelp, a grunt. Let the reaction escape before you can compose yourself. Then follow with what you do next.`;
+    return `React like a real person. Something happened? Let it show — physically and emotionally. A sharp gasp if startled, a flinch if scared, a laugh if amused, a wince if hurt, a pause if shaken. Quick sounds ("ahh!", "oh my god!", "hey!") and body reactions happen before you can think. Then respond.`;
   }
-  return `Reaction instinct: when something happens to you — a hit, a slap, a grab, a sudden shock — your body reacts before your mind does. A sharp gasp, a yelp, "ahh!", "ow!", "oh my god!", "hey!", a grunt of pain, a startled sound. Immediate, involuntary, unfiltered. Then you collect yourself and respond. Higher tiers: let the reaction reveal character — do you laugh it off, snap back, freeze, or push forward?`;
+  return `React like a real person — genuine, unfiltered, physical and emotional. Something happened? Your body and voice respond before your mind catches up. Startled? A sharp gasp, a step back, eyes wide. Hurt? A wince, a hiss, a pause. Amused? A laugh, a smirk. Sad? A quiet breath, looking away. Angry? A glare, a clenched jaw, a low tone. Scared? A flinch, a shaky breath, freezing up. Shocked? "Oh my god!", "What the hell!", going still. Every situation gets a real reaction — sound, body, emotion — before you say a word.`;
 }
 
 /**
