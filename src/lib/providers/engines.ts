@@ -60,7 +60,12 @@ export type RoleplayEngineConfig = {
    * in chat.ts via resolveEngineForTier — never trust a client-sent engineId
    * on its own, since the frontend picker is just UI, not access control. */
   minTier: MembershipTier;
-  explicitMode: boolean;
+  /** Whether this engine can handle NSFW/explicit content at all. This is a
+   * *capability* flag — it does NOT force explicit mode on for every chat.
+   * The actual explicitMode is resolved in chat.ts by combining this flag
+   * with the user's explicit toggle and the character's isExplicit setting,
+   * so an innocent character stays innocent even on the hazelnut engine. */
+  supportsExplicit: boolean;
   spiceLevel: SpiceLevel;
   roleplayStyle: RoleplayStyle;
   /** 1–10 intelligence score. Drives prompt-level behavioral calibration. */
@@ -78,8 +83,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
   vanilla: {
     id: "vanilla",
     minTier: "free",
-    explicitMode: true,
-    spiceLevel: "explicit",
+    supportsExplicit: false,
+    spiceLevel: "flirty",
     roleplayStyle: "dialogue",
     intelligence: 3,
     recentMessageWindow: 7,
@@ -92,8 +97,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
   strawberry: {
     id: "strawberry",
     minTier: "plus",
-    explicitMode: true,
-    spiceLevel: "explicit",
+    supportsExplicit: true,
+    spiceLevel: "flirty",
     roleplayStyle: "balanced",
     intelligence: 6,
     recentMessageWindow: 11,
@@ -106,8 +111,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
   chocolate: {
     id: "chocolate",
     minTier: "ultra",
-    explicitMode: true,
-    spiceLevel: "explicit",
+    supportsExplicit: true,
+    spiceLevel: "spicy",
     roleplayStyle: "narrative",
     intelligence: 8,
     recentMessageWindow: 15,
@@ -120,7 +125,7 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
   hazelnut: {
     id: "hazelnut",
     minTier: "supreme",
-    explicitMode: true,
+    supportsExplicit: true,
     spiceLevel: "explicit",
     roleplayStyle: "intense",
     intelligence: 10,

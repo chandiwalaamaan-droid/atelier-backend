@@ -157,7 +157,19 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // user isn't entitled to it, transparently substitutes the best engine
   // their plan does cover rather than erroring the request out.
   const { engine, downgradedFrom, requiredTier } = resolveEngineForTier(body.engineId, membershipTier);
-  const explicitMode = engine ? engine.explicitMode : body.explicitMode === true;
+  // explicitMode is the intersection of three factors:
+  //   1. Whether this engine can handle explicit content at all (supportsExplicit).
+  //   2. The user's explicit toggle from the chat UI.
+  //   3. Whether the character is marked as isExplicit (innocent characters
+  //      stay innocent even on explicit-capable engines — a sweet character on
+  //      hazelnut stays sweet unless her creator set her isExplicit flag).
+  // For manual/no-engine requests, fall back to the client's explicitMode body
+  // field directly — that path is the older slider UI where the user has full
+  // control.
+  const clientExplicitMode = body.explicitMode === true;
+  const explicitMode = engine
+    ? engine.supportsExplicit && clientExplicitMode && character.isExplicit
+    : clientExplicitMode;
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
