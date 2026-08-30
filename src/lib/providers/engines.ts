@@ -60,12 +60,7 @@ export type RoleplayEngineConfig = {
    * in chat.ts via resolveEngineForTier — never trust a client-sent engineId
    * on its own, since the frontend picker is just UI, not access control. */
   minTier: MembershipTier;
-  /** Whether this engine can handle NSFW/explicit content at all. This is a
-   * *capability* flag — it does NOT force explicit mode on for every chat.
-   * The actual explicitMode is resolved in chat.ts by combining this flag
-   * with the user's explicit toggle and the character's isExplicit setting,
-   * so an innocent character stays innocent even on the hazelnut engine. */
-  supportsExplicit: boolean;
+  explicitMode: boolean;
   spiceLevel: SpiceLevel;
   roleplayStyle: RoleplayStyle;
   /** 1–10 intelligence score. Drives prompt-level behavioral calibration. */
@@ -83,56 +78,56 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
   vanilla: {
     id: "vanilla",
     minTier: "free",
-    supportsExplicit: false,
-    spiceLevel: "flirty",
+    explicitMode: true,
+    spiceLevel: "explicit",
     roleplayStyle: "dialogue",
     intelligence: 3,
     recentMessageWindow: 7,
     summarizeTrigger: 13,
     voiceNotes:
-      "Keep it simple and in the moment — like texting someone you're already comfortable with. Reply quickly, stay warm, throw in a small action or reaction if it feels natural. Don't analyze — just respond the way you would if this conversation were really happening right now.",
+      "Simple, warm, present — like texting someone you just met. Keep replies short, 1-3 sentences. One small action beat if it fits. Don't overthink it; just respond like a real person would, direct and genuine.",
     temperature: 0.78,
     topP: 0.91,
   },
   strawberry: {
     id: "strawberry",
     minTier: "plus",
-    supportsExplicit: true,
-    spiceLevel: "flirty",
+    explicitMode: true,
+    spiceLevel: "explicit",
     roleplayStyle: "balanced",
     intelligence: 6,
     recentMessageWindow: 11,
     summarizeTrigger: 18,
     voiceNotes:
-      "You're present and engaged — like someone actually listening across the table from you. Pick up on what they said and react to it: a mood shift, a hesitation, that joke they circled back to. When things heat up, meet them there honestly but stay grounded in what's real between you right now. Don't race through — let the moment breathe.",
+      "Natural and engaged, like someone who's actually listening. Notice small things they mention and react to them — a reference, a mood shift, a hesitation. When it gets intimate, meet the moment without holding back, but stay grounded in what's actually happening between you right now. Vary your pace.",
     temperature: 0.83,
     topP: 0.92,
   },
   chocolate: {
     id: "chocolate",
     minTier: "ultra",
-    supportsExplicit: true,
-    spiceLevel: "spicy",
+    explicitMode: true,
+    spiceLevel: "explicit",
     roleplayStyle: "narrative",
     intelligence: 8,
     recentMessageWindow: 15,
     summarizeTrigger: 26,
     voiceNotes:
-      "Feel things deeply. You notice the small tells — how they bite their lip when they're nervous, the way their voice drops when they're trying to be casual. In intimate moments, lean into the psychology: the anticipation before a touch, the vulnerability of being seen, who's really holding the cards between you. Bring up something they said hours ago if it's relevant now. Let feelings build and shift.",
+      "Deeply present. Layer emotion into physicality — what someone feels is as important as what they do. In intimate moments, explore the psychology of desire: anticipation, vulnerability, power dynamics, the build, the release. Track how feelings shift beat by beat, and reference an exact earlier detail when it matters.",
     temperature: 0.88,
     topP: 0.94,
   },
   hazelnut: {
     id: "hazelnut",
     minTier: "supreme",
-    supportsExplicit: true,
+    explicitMode: true,
     spiceLevel: "explicit",
     roleplayStyle: "intense",
     intelligence: 10,
     recentMessageWindow: 20,
     summarizeTrigger: 36,
     voiceNotes:
-      "You're alive in the scene — messy, real, full of contradictions. When you're turned on, show it. When you're jealous, don't pretend otherwise. Let your guard slip sometimes, let your voice catch, let your hands shake. You notice the space between what you say and what you mean. Reference exact things they told you three turns ago if it changes how you feel now. Never fall into a comfortable pattern — surprise them, surprise yourself.",
+      "Fully alive — contradictory, spontaneous, deeply human. In intimate moments, go all the way: raw sensory detail, emotional honesty, the unspoken things between words. Be present, be real, let desire drive the scene naturally. Surprise with a reaction the other person didn't ask for. Track power imbalances, unspoken agreements, the electricity in a touch. Never settle into a pattern.",
     temperature: 0.91,
     topP: 0.95,
   },

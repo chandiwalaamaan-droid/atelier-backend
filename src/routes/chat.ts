@@ -156,22 +156,17 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // checks body.engineId against requestingUser.membershipTier and, if the
   // user isn't entitled to it, transparently substitutes the best engine
   // their plan does cover rather than erroring the request out.
+  // explicitMode is controlled by the chat UI toggle. Any signed-in user may
+  // enable it for their private conversations — not limited to isExplicit characters.
+  // If the client sent a named engine id (from the roleplay-engine picker),
+  // its config is the source of truth — explicitMode/spiceLevel/
+  // roleplayStyle/voiceNotes/temperature all come from this fixed,
+  // server-owned list (see providers/engines.ts), not from the client
+  // directly. Falls back to the older raw explicitMode/spiceLevel/
+  // roleplayStyle body fields for any client that isn't sending an
+  // engineId yet (manual slider mode).
   const { engine, downgradedFrom, requiredTier } = resolveEngineForTier(body.engineId, membershipTier);
-  // explicitMode is true when ALL of these are true:
-  //   1. The character is marked isExplicit (18+ characters). Innocent
-  //      characters NEVER get the explicit provider chain, regardless of engine
-  //      or user toggle — they stay loyal to their description.
-  //   2. Either:
-  //      a. A named engine is selected AND it supports explicit content
-  //         (vanilla is SFW-only), AND the user's explicit toggle is on.
-  //      b. No engine (manual/slider mode) and the user's explicit toggle is on.
-  // The explicit provider chain (Groq → SambaNova → Cloudflare → NVIDIA →
-  // Ollama) is used only when explicitMode is true; SFW stays on the default
-  // NVIDIA-first chain.
-  const clientExplicitMode = body.explicitMode === true;
-  const explicitMode = character.isExplicit && engine
-    ? engine.supportsExplicit && clientExplicitMode
-    : character.isExplicit && clientExplicitMode;
+  const explicitMode = engine ? engine.explicitMode : body.explicitMode === true;
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;

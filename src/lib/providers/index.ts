@@ -596,10 +596,11 @@ function buildLengthCapBlock(intelligence: number): string {
 function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, roleplayStyle: string): string {
   // Heat *style* (not permission — every tier is equally explicit-capable,
   // see engines.ts) now scales off intelligence rather than spiceLevel.
-  // spiceLevel still varies across tiers (flirty for vanilla/strawberry,
-  // spicy for chocolate, explicit for hazelnut) and is passed here for
-  // context, but intelligence is what actually drives how a reply *delivers*
-  // content — the behavior ladder below scales on intelligence, not spiceLevel
+  // Every engine sets spiceLevel: "explicit" as of the tier redesign, so
+  // deriving this word from spiceLevel collapsed to the same "explicit
+  // heat" phrase on all four tiers — a dead differentiator. intelligence
+  // is genuinely tier-exclusive, so it's what should drive how a reply
+  // *delivers* explicit content, not whether it's allowed to.
   const spice =
     intelligence <= 3
       ? "quick, direct"
