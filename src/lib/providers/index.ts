@@ -1219,9 +1219,10 @@ export async function streamChatWithFallback(
 
 export async function summarizeWithFallback(
   previousSummary: string,
-  summaryMessages: ChatMessage[]
+  summaryMessages: ChatMessage[],
+  params?: GenParams
 ): Promise<string> {
-  const chain = buildChain();
+  const chain = buildChain(params);
   for (const candidate of chain) {
     if (candidate.breaker?.isOpen()) continue;
     let start = 0;
@@ -1249,6 +1250,23 @@ export async function summarizeWithFallback(
     }
   }
   return previousSummary;
+}
+
+/** Token ceiling for the summarization call, matching the word limit
+ * buildSummaryPrompt already tells the model to stay under (200/300/400
+ * words by tier). Without this, summarizeWithFallback previously called
+ * buildChain() with no params, so every provider fell back to its own
+ * general-purpose default (1024 tokens on Groq/NVIDIA/SambaNova/Cloudflare)
+ * — several times bigger than a compliant summary needs, with no backstop
+ * if a model ignored the word-count instruction. That matters more than a
+ * single oversized reply would: an inflated memorySummary gets resent in
+ * the system prompt on every future turn for that character, so waste here
+ * compounds instead of being one-off. ~1.6 tokens/word covers normal
+ * English prose plus headroom for the model to actually land the sentence
+ * it's on rather than getting cut mid-thought right at the target length. */
+function maxTokensForSummary(intelligence: number): number {
+  const words = intelligence >= 8.5 ? 400 : intelligence >= 6.5 ? 300 : 200;
+  return Math.round(words * 1.6);
 }
 
 function buildSummaryPrompt(explicitContext: boolean, intelligence: number): string {
@@ -1294,7 +1312,7 @@ export async function summarizeConversation(
     },
   ];
 
-  return summarizeWithFallback(previousSummary, summaryMessages);
+  return summarizeWithFallback(previousSummary, summaryMessages, { maxTokens: maxTokensForSummary(intelligence) });
 }
 
 // Re-exported for anything that wants a direct configured-check without
