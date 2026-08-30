@@ -42,11 +42,11 @@ from the original app.
 
 1. `npm install`
 2. `cp .env.example .env` and fill in:
-   - `DATABASE_URL` — a CockroachDB Serverless connection string (get one free
-     at cockroachlabs.cloud; 10 GiB free storage). Any Postgres-wire-compatible
-     connection string works since `prisma/schema.prisma` uses the `cockroachdb`
-     provider — swap it back to `postgresql` if you'd rather point at plain
-     Postgres or local SQLite for dev.
+   - `DATABASE_URL` — a TiDB Cloud Serverless connection string (get one free
+     at tidbcloud.com; 5 GiB free storage). Any MySQL-wire-compatible
+     connection string works since `prisma/schema.prisma` uses the `mysql`
+     provider — point it at plain MySQL or PlanetScale instead if you'd
+     rather use one of those for dev.
    - `FRONTEND_URL` — `http://localhost:3000` for local frontend dev
    - `SESSION_SECRET` — any long random string
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` — optional.
@@ -87,7 +87,7 @@ authenticated request (debounced to once per 6h per user — see
 
 | Service | Free tier limit | Sign up |
 |---|---|---|
-| **CockroachDB Serverless** | 10 GiB storage | [cockroachlabs.cloud](https://cockroachlabs.cloud) |
+| **TiDB Cloud Serverless** | 5 GiB storage | [tidbcloud.com](https://tidbcloud.com) |
 | **Groq** | 100k tokens/day per account | [console.groq.com](https://console.groq.com) |
 | **NVIDIA NIM** | Free tier available | [build.nvidia.com](https://build.nvidia.com) |
 | **SambaNova Cloud** | Free tier available | [cloud.sambanova.ai](https://cloud.sambanova.ai) |
@@ -100,14 +100,14 @@ authenticated request (debounced to once per 6h per user — see
 
 1. **Push this folder to GitHub.** Make the repo public if you want the community to be able to inspect the backend code.
 
-2. **Create a CockroachDB Serverless cluster** at cockroachlabs.cloud and copy the connection string.
+2. **Create a TiDB Cloud Serverless cluster** at tidbcloud.com and copy the connection string.
 
 3. **Sign up for Groq, NVIDIA NIM, and SambaNova** and collect at least one API key each. Create a second Groq account and add its key as `GROQ_API_KEY_2` for double the daily token headroom.
 
 4. **Create a Backblaze B2 bucket**, create an Application Key (write-only), and note the `keyId`, `applicationKey`, `bucket name`, and `endpoint`.
 
 5. **In Render: New → Blueprint**, point at this repo. Render reads `render.yaml`. Set these env vars:
-   - `DATABASE_URL` — your CockroachDB connection string
+   - `DATABASE_URL` — your TiDB Cloud connection string
    - `GROQ_API_KEY` and optionally `GROQ_API_KEY_2`
    - `NVIDIA_API_KEY` and optionally `NVIDIA_API_KEY_2`
    - `SAMBANOVA_API_KEY` and optionally `SAMBANOVA_API_KEY_2`
@@ -133,8 +133,8 @@ authenticated request (debounced to once per 6h per user — see
 - Render's free dyno sleeps after 15 minutes of inactivity. The first request
   after a sleep takes 10–30 seconds to warm up. This is acceptable for the
   target scale; upgrade to the Starter plan ($7/month) if you want always-on.
-- Prisma's built-in connection pooler handles the CockroachDB connection
-  lifecycle — no external pooler needed on the free tier.
+- TiDB Cloud Serverless handles connection pooling on its end — no external
+  pooler needed on the free tier.
 - The in-memory rate limiter (`src/lib/rateLimit.ts`) resets on each dyno
   restart. For the target scale this is fine; if you later upgrade to a
   multi-instance plan, switch to a Redis-backed limiter.
