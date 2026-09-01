@@ -2,7 +2,6 @@ import { Router } from "express";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { asyncHandler } from "../lib/asyncHandler";
 import { getClient, getBucketName } from "../lib/b2";
-import { prisma } from "../lib/db";
 
 // GET /api/images/:key(*) — streams an object straight out of the private
 // B2 bucket. This is what lets the bucket stay PRIVATE (no card-on-file
@@ -12,41 +11,12 @@ import { prisma } from "../lib/db";
 // The key is url-encoded on write (see uploadAvatarBuffer in ../lib/b2) and
 // contains slashes ("rolichat/avatars/xyz.png"), so we use a wildcard param
 // and decode it ourselves rather than relying on a single :key segment.
-//
-// No login is required here on purpose — character avatars/backgrounds are
-// meant to be publicly visible (Discover works for logged-out visitors, and
-// these URLs are used in plain <img> tags). But we don't want to serve just
-// *any* key in the bucket to an unauthenticated prober/enumerator either, so
-// we only serve keys that are actually a live avatarUrl/backgroundUrl on some
-// User or Character row. Orphaned/replaced uploads (and stray objects that
-// were never attached to anything) 404 instead of being fetchable forever.
 const router = Router();
 
 router.get(
   "/:key(*)",
   asyncHandler(async (req, res) => {
     const key = decodeURIComponent(req.params.key);
-    const urlSuffix = `/api/images/${encodeURIComponent(key)}`;
-
-    const [ownerUser, ownerCharacter] = await Promise.all([
-      prisma.user.findFirst({
-        where: { avatarUrl: { endsWith: urlSuffix } },
-        select: { id: true },
-      }),
-      prisma.character.findFirst({
-        where: {
-          OR: [
-            { avatarUrl: { endsWith: urlSuffix } },
-            { backgroundUrl: { endsWith: urlSuffix } },
-          ],
-        },
-        select: { id: true },
-      }),
-    ]);
-
-    if (!ownerUser && !ownerCharacter) {
-      return res.status(404).json({ error: "Image not found." });
-    }
 
     let object;
     try {
