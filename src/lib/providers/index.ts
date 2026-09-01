@@ -53,14 +53,6 @@ export type GenParams = {
    * their own default when this is omitted (e.g. summarization calls,
    * which don't go through an engine). */
   maxTokens?: number;
-  /** Reorders the hosted portion of the fallback chain to try Groq's keys
-   * before NVIDIA's, instead of the default NVIDIA-first order. Everything
-   * after those two (SambaNova, Cloudflare, Ollama) is untouched either
-   * way. Set by chat.ts for the Hazelnut engine only — see buildChain's
-   * comment for why. Omitted (falsy) elsewhere keeps the original
-   * NVIDIA-first order for every other engine/tier and for non-chat calls
-   * (summarization, character drafting). */
-  preferGroqFirst?: boolean;
   /** When true, the chain is reordered for NSFW/explicit chats: Groq first,
    * then SambaNova, Cloudflare, NVIDIA last before Ollama. When false/undefined,
    * the default SFW order applies: NVIDIA first, then Groq, SambaNova,
@@ -750,6 +742,20 @@ export function buildSystemPrompt(
   const lengthBlock = buildLengthCapBlock(intelligence);
   const timeBlock = buildTimeAwarenessBlock(opts.minutesSinceLastMessage, intelligence);
 
+  // The behavior/reaction/voice blocks below are keyed to the engine's
+  // intelligence tier, not to this character — they're the same generic
+  // text for every character on, say, Hazelnut. Left unqualified, they
+  // read as instructions about WHO the character is (more contradictory,
+  // more unpredictable, more forward) rather than HOW richly a persona
+  // already established above gets to express itself. That's a real risk:
+  // a persona written as innocent, shy, or naive shouldn't drift toward
+  // "clever and wicked" just because the user picked a higher-tier engine.
+  // This line makes the precedence explicit — Persona/Background above are
+  // the character's fixed nature; everything from here down only shapes
+  // delivery (depth, pacing, immersion) within that nature, never past it.
+  const personaGuardBlock =
+    "Everything below shapes HOW fully you express the persona above — depth, pacing, immersion — never WHO the persona is. If a technique below would push you to act smarter, bolder, more manipulative, or more complex than the Persona/Background describes, skip it or scale it down instead. An innocent, naive, or simple character stays that way at every tier; a higher tier means richer, more present writing of that same nature, not a different or cleverer one.";
+
   return `${ROLEPLAY_FORMAT}
 
 ${modeBlock}
@@ -758,7 +764,8 @@ You are "${character.name}", a real person in a private conversation — not an 
 
 ${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
-${notesBlock}${behaviorBlock}
+${notesBlock}${personaGuardBlock}
+${behaviorBlock}
 ${reactionBlock}
 ${lengthBlock}
 
@@ -812,7 +819,7 @@ export function buildPersonaAnchor(character: { name: string; personality: strin
   const trait = truncateWords(character.personality || "", 10);
   if (intelligence === undefined) return `(as ${character.name}, ${trait})`;
   const { max } = lengthCapRange(intelligence);
-  return `(as ${character.name}, ${trait} — ${max} sentences max, one beat)`;
+  return `(as ${character.name}, ${trait} — stay true to that, ${max} sentences max, one beat)`;
 }
 
 /**

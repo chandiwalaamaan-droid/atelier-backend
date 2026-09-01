@@ -172,17 +172,21 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
-  // Hazelnut gets Groq tried before NVIDIA (everything after those two —
-  // SambaNova, Cloudflare, Ollama — is unaffected); every other engine, and
-  // manual/no-engine requests, keep the default NVIDIA-first order. See
-  // buildChain's comment in providers/index.ts for the full chain order.
-  // explicitMode reorders the chain for NSFW chats: Groq -> SambaNova ->
-  // Cloudflare -> NVIDIA -> Ollama, so NVIDIA only answers NSFW as a last
-  // resort. SFW chats use the default NVIDIA-first chain.
+  // Hazelnut (supreme tier, "Ultimate Experience") always routes through the
+  // explicit provider chain — Groq -> SambaNova -> Cloudflare -> NVIDIA ->
+  // Ollama — regardless of the client's explicitMode toggle. This is
+  // deliberately separate from `explicitMode` above (which still gates the
+  // system prompt's content-mode framing and relationship tracking): a
+  // stale/misbehaving client that fails to send explicitMode: true should
+  // never silently land a Hazelnut request on the SFW, NVIDIA-first chain.
+  // Every other engine, and manual/no-engine requests, keep the ordering
+  // `explicitMode` alone decides. See buildChain's comment in
+  // providers/index.ts for the full chain order.
+  const chainExplicitMode = explicitMode || engine?.id === "hazelnut";
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, preferGroqFirst: engine.id === "hazelnut", explicitMode }
-    : { maxTokens, explicitMode };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, explicitMode: chainExplicitMode }
+    : { maxTokens, explicitMode: chainExplicitMode };
   const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =
