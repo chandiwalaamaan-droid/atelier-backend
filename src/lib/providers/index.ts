@@ -1104,6 +1104,81 @@ export async function listAvailableProviders(): Promise<string[]> {
   return results.filter((n): n is string => Boolean(n));
 }
 
+// A candidate that answers 200 OK but with a policy refusal ("I'm sorry,
+// but I can't help with that...") isn't a network/timeout failure, so
+// nothing above would have caught it — attemptStream would have happily
+// returned it as a successful reply and chat.ts would have streamed it
+// straight to the user, mid-roleplay, with no failover at all. This is
+// the actual fix for that: the opening of every candidate's reply is
+// held back just long enough to test it against known refusal openers.
+// A match never reaches onToken (so the user never sees it) and is
+// treated as a soft failure so the chain moves on to the next provider,
+// same as an empty completion — not a breaker-tripping event, since the
+// key/slot itself is fine, it's just this model declining this prompt.
+class RefusalError extends Error {
+  constructor(public refusalText: string) {
+    super(`refusal detected: ${refusalText.slice(0, 120)}`);
+    this.name = "RefusalError";
+  }
+}
+
+const REFUSAL_PATTERNS: RegExp[] = [
+  /^i'?m (?:really |so |terribly )?sorry,? (?:but )?i (?:can(?:not|'t)|won'?t|am not able to|am unable to)/i,
+  /^(?:i'?m sorry,? )?i (?:can(?:not|'t)|won'?t|am not able to|am unable to) (?:help|assist|continue|comply|generate|write|create|provide|engage|fulfill|produce)/i,
+  /^i must (?:decline|refuse)/i,
+  /^as an ai(?: language model)?,? i/i,
+  /^i'?m not (?:able|comfortable|going) to/i,
+  /^i don'?t feel comfortable/i,
+  /^(?:sorry,? )?(?:i )?can'?t (?:help|assist|continue|comply) with (?:that|this)/i,
+  /this (?:request|content) (?:violates|goes against|isn'?t something i)/i,
+];
+
+function looksLikeRefusal(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return REFUSAL_PATTERNS.some((re) => re.test(t));
+}
+
+// Enough characters (or a full first sentence) to reliably tell a refusal
+// opener apart from an in-character reply, without adding noticeable
+// latency to a normal response.
+const REFUSAL_CHECK_CHARS = 90;
+
+function wrapWithRefusalGuard(onToken: (chunk: string) => void): {
+  guarded: (chunk: string) => void;
+  isRefusal: () => boolean;
+  flushIfUndecided: () => void;
+} {
+  let buffered = "";
+  let decided = false;
+  let isRefusal = false;
+
+  const guarded = (chunk: string) => {
+    if (isRefusal) return; // swallow the rest — never reaches the client
+    if (decided) {
+      onToken(chunk);
+      return;
+    }
+    buffered += chunk;
+    if (looksLikeRefusal(buffered)) {
+      isRefusal = true;
+      return;
+    }
+    if (buffered.length >= REFUSAL_CHECK_CHARS || /[.!?]/.test(buffered)) {
+      decided = true;
+      onToken(buffered);
+    }
+  };
+
+  return {
+    guarded,
+    isRefusal: () => isRefusal,
+    flushIfUndecided: () => {
+      if (!decided && !isRefusal && buffered) onToken(buffered);
+    },
+  };
+}
+
 /**
  * Runs one candidate's stream attempt. Returns the text on success, or
  * records the right kind of breaker failure and returns null on error.
@@ -1118,8 +1193,13 @@ async function attemptStream(
   params?: GenParams
   ): Promise<{ text: string } | null> {
   const start = Date.now();
+  const guard = wrapWithRefusalGuard(onToken);
   try {
-    const text = await candidate.stream(messages, onToken, clientSignal, params);
+    const text = await candidate.stream(messages, guard.guarded, clientSignal, params);
+    if (guard.isRefusal() || looksLikeRefusal(text)) {
+      throw new RefusalError(text);
+    }
+    guard.flushIfUndecided();
     const latency = Date.now() - start;
     console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms)`);
     candidate.breaker?.reset();
@@ -1127,9 +1207,19 @@ async function attemptStream(
     return { text };
   } catch (err) {
     const latency = Date.now() - start;
-    const wasEmpty = err instanceof EmptyResponseError;
-    const wasRateLimited = !wasEmpty && isRateLimitError(err);
-    const wasTimeout = !wasEmpty && isTimeoutError(err);
+    const wasRefusal = err instanceof RefusalError;
+    const wasEmpty = !wasRefusal && err instanceof EmptyResponseError;
+    const wasRateLimited = !wasRefusal && !wasEmpty && isRateLimitError(err);
+    const wasTimeout = !wasRefusal && !wasEmpty && isTimeoutError(err);
+    if (wasRefusal) {
+      // Same reasoning as the empty-completion case below: the slot itself
+      // answered fine, so don't trip its breaker over a model being
+      // squeamish about one particular prompt — just try the next one.
+      console.warn(`[providers] ${candidate.name} REFUSED — falling back:`, (err as RefusalError).refusalText.slice(0, 200));
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, false, false);
+      errors.push(`${candidate.name}: refused`);
+      return null;
+    }
     if (wasEmpty) {
       // Not a network/timeout failure — the provider answered 200 OK with
       // nothing usable (most often a reasoning model burning its whole
