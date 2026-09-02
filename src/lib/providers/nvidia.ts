@@ -2,33 +2,11 @@ import { streamOpenAICompatibleChat, completeOpenAICompatibleChat } from "./open
 import type { GenParams } from "./index";
 
 const BASE_URL = "https://integrate.api.nvidia.com/v1";
-// User explicitly deprioritized uncensored-ness for this pick in favor of
-// speed + intelligence, which reopens NVIDIA's own Nemotron line (earlier
-// ruled out for llama-3.1-nemotron-nano-8b-v1 specifically because
-// NVIDIA's RLHF pass reintroduces refusal behavior — noted below, still
-// true, just no longer disqualifying given the new priority).
-//
-// Current default: nvidia/nemotron-nano-12b-v2-vl — 12B hybrid
-// Mamba-Transformer reasoning model, confirmed Free Endpoint on NVIDIA's
-// catalog (unlike nemotron-3-nano-30b-a3b / nemotron-3-super-120b-a12b,
-// which list as Downloadable-only despite third-party trackers like
-// OpenRouter showing them as "free" — that's a different host, not
-// integrate.api.nvidia.com). Sits well under the 49B/70B latency-risk
-// zone while scoring meaningfully higher than the 8B on reasoning
-// benchmarks. Vision-capable but works fine text-only for this app's
-// purposes.
-//
-// Its reasoning toggle is NOT chat_template_kwargs like DeepSeek's — it's
-// a literal "/think" or "/no_think" token NVIDIA expects inside a system
-// message (see withReasoningToggle() below). Off by default, same
-// rationale as every other reasoning model here: short conversational
-// roleplay turns don't benefit from the added latency, and thinking
-// tokens would eat into the visible-reply token budget.
-//
-// If this doesn't hold up, llama-3.1-nemotron-nano-4b-v1.1 (Free
-// Endpoint, same family, smaller/faster/lower ceiling) is the next thing
-// to try before falling back to the verified-safe meta/llama-3.1-8b-
-// instruct below.
+// Current default: minimaxai/minimax-m3 — confirmed working on NVIDIA's
+// Free Endpoint for this account. This is now the model that answers
+// first for every chat request (SFW and NSFW alike), since the chain no
+// longer reorders to Groq-first for explicit chats — see buildChain in
+// providers/index.ts.
 //
 // Everything tried and failed before landing here, so don't re-attempt
 // any of these blind:
@@ -67,7 +45,7 @@ const BASE_URL = "https://integrate.api.nvidia.com/v1";
 // file: set NVIDIA_MODEL in the Render dashboard (Environment tab) and
 // redeploy — no zip re-upload needed. The string below is only the
 // fallback used when NVIDIA_MODEL isn't set at all.
-const MODEL = process.env.NVIDIA_MODEL || "nvidia/nemotron-3.5-lightning-30b-a3b";
+const MODEL = process.env.NVIDIA_MODEL || "minimaxai/minimax-m3";
 
 // See MODEL comment above — Nemotron Nano's reasoning toggle is a literal
 // token inside a system message, not a request-body field, and only

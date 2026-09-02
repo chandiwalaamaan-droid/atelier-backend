@@ -53,11 +53,12 @@ export type GenParams = {
    * their own default when this is omitted (e.g. summarization calls,
    * which don't go through an engine). */
   maxTokens?: number;
-  /** When true, the chain is reordered for NSFW/explicit chats: Groq first,
-   * then SambaNova, Cloudflare, NVIDIA last before Ollama. When false/undefined,
-   * the default SFW order applies: NVIDIA first, then Groq, SambaNova,
+  /** When true, the chain is reordered to Groq first, then SambaNova,
+   * Cloudflare, NVIDIA last before Ollama. This is set only for the
+   * Hazelnut engine (supreme tier) — every other request, SFW or NSFW,
+   * uses the single default chain: NVIDIA first, then Groq, SambaNova,
    * Cloudflare, Ollama. */
-  explicitMode?: boolean;
+  groqFirst?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -868,8 +869,15 @@ export const SUMMARIZE_TRIGGER = 15;
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Groq #1 -> Groq #2 -> Groq #3 -> Groq #4 -> SambaNova #1 -> SambaNova #2 ->
-//     NVIDIA #1 -> NVIDIA #2 -> NVIDIA #3 -> Cloudflare Workers AI -> Ollama
+//     NVIDIA #1 -> NVIDIA #2 -> NVIDIA #3 -> Groq #1 -> Groq #2 -> Groq #3 ->
+//     Groq #4 -> SambaNova #1 -> SambaNova #2 -> Cloudflare Workers AI -> Ollama
+//
+// This single NVIDIA-first chain is used for every request — SFW and NSFW
+// alike. There used to be a second, Groq-first ordering that activated for
+// any explicit/NSFW chat; that's gone. The only request type that still
+// gets a different order is the Hazelnut engine (supreme tier), which sets
+// params.groqFirst and gets Groq first, then SambaNova, Cloudflare, NVIDIA
+// last before Ollama — see the groqFirst branch in buildChain below.
 //
 // NVIDIA #2 / SambaNova #2 are optional extra API keys
 // (NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2) — ideally from separate
@@ -879,25 +887,25 @@ export const SUMMARIZE_TRIGGER = 15;
 // having extra slots for all hosted providers configured meaningfully
 // multiplies the request headroom before falling back to Ollama.
 //
-// Groq is first: added back temporarily for diagnosis. Previously removed
-// because Groq deprecated llama-3.3-70b-versatile (its best uncensored
-// model) and the replacement gpt-oss-120b has refusals baked in. The
-// workaround is qwen/qwen3.6-27b, which is what we're diagnosing now.
-// Kept first in the chain so logs clearly show whether Groq is answering
-// or failing, without noise from other providers.
+// NVIDIA NIM is first for the default chain: it's the working model
+// (minimax/minimax-m3), fast and reliable enough on the current free-tier
+// load to answer first for every request that isn't Hazelnut.
 //
-// SambaNova is second: fast (RDU hardware, ~2–4s typical) and serves raw
+// Groq is second: qwen/qwen3.6-27b, no extra safety layer. Falls back here
+// when NVIDIA is rate-limited, down, or its breaker is open from a prior
+// timeout. It only leads the chain for the Hazelnut engine (see
+// params.groqFirst above) — kept first there so logs clearly show whether
+// Groq is answering or failing for that engine specifically.
+//
+// SambaNova is third: fast (RDU hardware, ~2–4s typical) and serves raw
 // Meta Llama with no extra safety layer applied server-side, same as
 // NVIDIA. This app supports an explicit/NSFW roleplay mode, and Llama
 // goes along with mature fictional content far more readily than some
 // hosted alternatives. Despite its restrictive 20 req/day free-tier limit,
-// it's kept second because it's the fastest and best quality for the few
-// requests it can handle.
+// it's kept behind NVIDIA/Groq because it's a scarce resource — reserved
+// for when the wider-budget providers are down.
 //
-// NVIDIA NIM is third: its free tier is solid but consistently slower to
-// first token than SambaNova (observed 8–25s). Still useful for headroom.
-//
-// Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
+// Cloudflare Workers AI (Llama 4 Scout) is placed after SambaNova: its free
 // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
 // daily ceiling regardless of how many accounts you have. It's still
 // useful as a fallback — and its per-request rate limit is generous —
@@ -984,17 +992,15 @@ function buildChain(params?: GenParams): Candidate[] {
   // SambaNova, then others
   // -----------------------------------------------------------------------
   //
-  // NVIDIA NIM is first: llama-3.1-8b-instruct, no extra safety layer,
-  // chosen for speed after the 70B model was consistently blowing through
-  // NVIDIA_TIMEOUT_MS under current free-tier load (see nvidia.ts for the
-  // full story). If the 8B model's reply quality becomes a problem, that's
-  // the trade-off being made here — a bigger model would need a longer
-  // timeout, which brings back the multi-second dead-air-before-fallback
-  // problem this swap was meant to solve.
+  // NVIDIA NIM is first for every request by default (see nvidia.ts for
+  // model details — currently minimaxai/minimax-m3, confirmed working on
+  // the free tier). It only yields the top spot when params.groqFirst is
+  // set, which chat.ts only does for the Hazelnut engine.
   //
-  // Groq is second: qwen/qwen3.6-27b, smaller than NVIDIA's 70B but fast
-  // and no extra safety layer. Falls back here when NVIDIA is rate-limited,
-  // down, or its breaker is open from a prior timeout.
+  // Groq is second by default: qwen/qwen3.6-27b, no extra safety layer.
+  // Falls back here when NVIDIA is rate-limited, down, or its breaker is
+  // open from a prior timeout. It only leads the chain (ahead of NVIDIA)
+  // for Hazelnut requests.
   //
   // SambaNova is third: same 70B Llama quality as NVIDIA and the fastest
   // hosted option (RDU hardware, ~2-4s typical), but its 20 req/day
@@ -1015,11 +1021,12 @@ function buildChain(params?: GenParams): Candidate[] {
   // -----------------------------------------------------------------------
 
   // NVIDIA and Groq candidates are built up front, then pushed in whichever
-  // order this request wants — SFW (NVIDIA-first) by default, or NSFW/
-  // explicit (Groq-first, NVIDIA pushed to last before Ollama) when
-  // params.explicitMode is set. SambaNova/Cloudflare below always come
-  // after the NVIDIA/Groq pair in SFW mode, or between Groq and NVIDIA in
-  // NSFW mode. Ollama is always last either way.
+  // order this request wants — NVIDIA-first by default for every request
+  // (SFW or NSFW alike), or Groq-first (NVIDIA pushed to last before
+  // Ollama) only when params.groqFirst is set, which chat.ts only does for
+  // the Hazelnut engine. SambaNova/Cloudflare below always come after the
+  // NVIDIA/Groq pair in the default order, or between Groq and NVIDIA when
+  // groqFirst is set. Ollama is always last either way.
   const nvidiaCandidates: Candidate[] = getNvidiaKeys().map(({ key, slot }) => {
     const breaker = [nvidia1Breaker, nvidia2Breaker, nvidia3Breaker][slot - 1];
     return {
@@ -1058,11 +1065,11 @@ function buildChain(params?: GenParams): Candidate[] {
     };
   });
 
-  if (params?.explicitMode) {
-    // NSFW/explicit: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
+  if (params?.groqFirst) {
+    // Hazelnut only: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
     chain.push(...groqCandidates, ...sambanovaCandidates);
   } else {
-    // SFW (default): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
+    // Default (every other engine, SFW or NSFW): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
     chain.push(...nvidiaCandidates, ...groqCandidates, ...sambanovaCandidates);
   }
 
@@ -1079,8 +1086,8 @@ function buildChain(params?: GenParams): Candidate[] {
     });
   }
 
-  if (params?.explicitMode) {
-    // NSFW: NVIDIA comes after Cloudflare, just before Ollama
+  if (params?.groqFirst) {
+    // Hazelnut only: NVIDIA comes after Cloudflare, just before Ollama
     chain.push(...nvidiaCandidates);
   }
 

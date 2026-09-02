@@ -161,32 +161,27 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // client's explicit toggle. The toggle (set by the frontend based on the
   // character's isExplicit flag + user preference) is the user's actual
   // intent — for 18+ characters, it's true; for innocent characters, it's
-  // false. AND-ing it with engine.explicitMode ensures that even when a
-  // named engine is used (which all have explicitMode: true), an innocent
-  // character still gets the SFW provider chain (NVIDIA-first), not the
-  // explicit chain (Groq-first). Only when both the engine supports it AND
-  // the client wants it does the explicit chain activate.
+  // false. AND-ing it with the engine's own explicitMode flag keeps this purely a
+  // content-framing signal now: it gates the system prompt's content-mode
+  // framing, spice/style parsing, and relationship tracking below. It no
+  // longer has any effect on provider chain order — see groqFirst below.
   const clientExplicitMode = body.explicitMode === true;
   const explicitMode = engine ? engine.explicitMode && clientExplicitMode : clientExplicitMode;
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
-  // Hazelnut (supreme tier, "Ultimate Experience") always routes through the
-  // explicit provider chain — Groq -> SambaNova -> Cloudflare -> NVIDIA ->
-  // Ollama — regardless of the client's explicitMode toggle. This is
-  // deliberately separate from `explicitMode` above (which still gates the
-  // system prompt's content-mode framing and relationship tracking): a
-  // stale/misbehaving client that fails to send explicitMode: true should
-  // never silently land a Hazelnut request on the SFW, NVIDIA-first chain.
-  // Every other engine, and manual/no-engine requests, keep the ordering
-  // `explicitMode` alone decides. See buildChain's comment in
-  // providers/index.ts for the full chain order.
-  const chainExplicitMode = explicitMode || engine?.id === "hazelnut";
+  // Every request — SFW or NSFW/explicit — uses the single default provider
+  // chain (NVIDIA first). The only exception is Hazelnut (supreme tier,
+  // "Ultimate Experience"), which always routes through the Groq-first
+  // chain — Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama —
+  // regardless of the client's explicitMode toggle. See buildChain's
+  // comment in providers/index.ts for the full chain order.
+  const groqFirst = engine?.id === "hazelnut";
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, explicitMode: chainExplicitMode }
-    : { maxTokens, explicitMode: chainExplicitMode };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, groqFirst }
+    : { maxTokens, groqFirst };
   const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =
