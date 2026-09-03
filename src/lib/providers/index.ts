@@ -23,6 +23,7 @@ type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export type SpiceLevel = "flirty" | "spicy" | "explicit";
 export type RoleplayStyle = "balanced" | "narrative" | "dialogue" | "slow_burn" | "intense";
+export type ChatLanguage = "english" | "hinglish";
 
 export type RoleplayPromptOptions = {
   explicitMode: boolean;
@@ -39,7 +40,20 @@ export type RoleplayPromptOptions = {
    * intelligence >= 6.5 and gaps >= 10 minutes. Undefined for the very
    * first message in a conversation (nothing to measure a gap against). */
   minutesSinceLastMessage?: number;
+  /** User-selected chat language. Undefined/"english" leaves the model on
+   * its default English voice; "hinglish" asks it to code-switch the way
+   * young Indian users actually text. Client-controlled, per-chat toggle —
+   * see parseLanguage. */
+  language?: ChatLanguage;
 };
+
+/** Parses the client's raw `language` body field into a known ChatLanguage,
+ * defaulting to undefined (i.e. no language block, plain English) for
+ * anything unrecognized so old clients that never send this field are
+ * unaffected. */
+export function parseLanguage(raw: unknown): ChatLanguage | undefined {
+  return raw === "hinglish" ? "hinglish" : undefined;
+}
 
 /** Sampling params threaded through to whichever provider ends up generating
  * the reply. Left undefined for anything that isn't tied to a named engine
@@ -638,6 +652,16 @@ function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, role
  * texting never gets a spurious "so quiet lately" — the block should only
  * ever fire for gaps a person would actually notice.
  */
+/** Hinglish directive for buildSystemPrompt. Kept deliberately specific
+ * about script (Roman only — Devanagari reads as stilted/formal to most
+ * Hinglish speakers and breaks the "texting a person" illusion) and about
+ * matching the user's own mix rather than forcing a fixed ratio, since
+ * real Hinglish density varies turn to turn. */
+function buildLanguageBlock(language: ChatLanguage | undefined): string {
+  if (language !== "hinglish") return "";
+  return `Language: Reply in Hinglish, the way young Indians actually text — natural Hindi-English code-switching in Roman/Latin script only (never Devanagari). Mirror how casual the user's own mix is; don't force a fixed ratio of Hindi to English. Keep slang, filler words ("yaar", "arre", "matlab", "bas"), and tone natural rather than textbook.\n`;
+}
+
 function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, intelligence: number): string {
   if (intelligence < 6.5 || minutesSinceLastMessage === undefined || minutesSinceLastMessage < 10) return "";
   const gap =
@@ -742,6 +766,7 @@ export function buildSystemPrompt(
   const reactionBlock = buildReactionBlock(intelligence);
   const lengthBlock = buildLengthCapBlock(intelligence);
   const timeBlock = buildTimeAwarenessBlock(opts.minutesSinceLastMessage, intelligence);
+  const languageBlock = buildLanguageBlock(opts.language);
 
   // The behavior/reaction/voice blocks below are keyed to the engine's
   // intelligence tier, not to this character — they're the same generic
@@ -769,7 +794,7 @@ ${notesBlock}${personaGuardBlock}
 ${behaviorBlock}
 ${reactionBlock}
 ${lengthBlock}
-
+${languageBlock}
 ${memoryBlock}${voiceBlock}${timeBlock}${steerBlock}`;
 }
 
@@ -816,11 +841,20 @@ function truncateWords(text: string, maxWords: number): string {
  * identity tag unchanged rather than being forced to thread a number
  * through just to call this.
  */
-export function buildPersonaAnchor(character: { name: string; personality: string }, intelligence?: number): string {
+export function buildPersonaAnchor(
+  character: { name: string; personality: string },
+  intelligence?: number,
+  language?: ChatLanguage
+): string {
   const trait = truncateWords(character.personality || "", 10);
-  if (intelligence === undefined) return `(as ${character.name}, ${trait})`;
+  // Language drift is at least as likely as persona/length drift over a long
+  // chat — recent turns are English by default, so nothing nearby reminds
+  // the model it's supposed to be code-switching. Reuse this same
+  // highest-leverage anchor slot rather than adding a second one.
+  const langSuffix = language === "hinglish" ? ", reply in Hinglish (Roman script)" : "";
+  if (intelligence === undefined) return `(as ${character.name}, ${trait}${langSuffix})`;
   const { max } = lengthCapRange(intelligence);
-  return `(as ${character.name}, ${trait} — stay true to that, ${max} sentences max, one beat)`;
+  return `(as ${character.name}, ${trait} — stay true to that, ${max} sentences max, one beat${langSuffix})`;
 }
 
 /**
@@ -841,9 +875,10 @@ export function buildPersonaAnchor(character: { name: string; personality: strin
 export function withPersonaAnchor(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   character: { name: string; personality: string },
-  intelligence?: number
+  intelligence?: number,
+  language?: ChatLanguage
 ) {
-  const anchor = buildPersonaAnchor(character, intelligence);
+  const anchor = buildPersonaAnchor(character, intelligence, language);
   const last = messages[messages.length - 1];
   if (last && last.role === "user") {
     last.content = `${last.content}\n\n${anchor}`;

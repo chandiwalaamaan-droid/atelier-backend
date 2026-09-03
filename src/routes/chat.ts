@@ -19,6 +19,7 @@ import {
   TTS_VOICES,
   parseSpiceLevel,
   parseRoleplayStyle,
+  parseLanguage,
   cleanAssistantResponse,
   withPersonaAnchor,
   countSentences,
@@ -171,6 +172,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
+  // Chat language is independent of engine/explicitMode — a per-chat toggle
+  // the client sends on every request (see buildChatBody on the frontend),
+  // not something baked into a named engine's config.
+  const language = parseLanguage(body.language);
   // Every request — SFW or NSFW/explicit — uses the single default provider
   // chain (NVIDIA first). The only exception is Hazelnut (supreme tier,
   // "Ultimate Experience"), which always routes through the Groq-first
@@ -291,6 +296,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     voiceNotes,
     engine,
     minutesSinceLastMessage,
+    language,
   });
   const chatMessages = [
     { role: "system" as const, content: system },
@@ -306,7 +312,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // anchor onto (pure regenerate-with-nothing-new-to-say edge case) so it
   // never silently adds a phantom user message to a real conversation.
   if (chatMessages[chatMessages.length - 1]?.role === "user") {
-    withPersonaAnchor(chatMessages, character, intelligence);
+    withPersonaAnchor(chatMessages, character, intelligence, language);
   }
 
   res.set({
