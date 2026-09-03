@@ -210,7 +210,7 @@ export function cleanAssistantResponse(text: string, intelligence = 5): string {
 }
 
 const ROLEPLAY_FORMAT =
-  "Format: *asterisks* for action beats only — never for italics, emphasis, or meta-commentary. Plain text for dialogue. Stay in character; no AI meta-commentary unless user goes OOC. Language: reply in the same language the user is writing in.";
+  "Format: *asterisks* for action beats only — never for italics, emphasis, or meta-commentary. Plain text for dialogue. Stay in character; no AI meta-commentary unless user goes OOC.";
 
 /**
  * Strips prompt-leakage artifacts from a generated reply before it reaches
