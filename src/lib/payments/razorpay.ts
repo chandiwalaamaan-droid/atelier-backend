@@ -135,32 +135,10 @@ export function membershipAmountInPaise(tier: MembershipTierId, cycle: BillingCy
   return Math.round(MEMBERSHIP_MONTHLY_PAISE[tier] * cycleMultiplier(cycle));
 }
 
-/**
- * Adds `months` to `d`, clamped to the last valid day of the resulting
- * month instead of letting it overflow. Plain `d.setMonth(d.getMonth() + n)`
- * doesn't clamp — subscribing monthly on Jan 31 would roll to Mar 3 (Feb
- * only has 28/29 days), and every renewal after that keeps drifting later
- * instead of settling back to end-of-month. Setting the date to 1 before
- * changing the month avoids a similar overflow while the month itself is
- * being changed (e.g. Jan 31 -> setMonth(+1) landing on "Feb 31" internally
- * before we've had a chance to clamp it).
- */
-function addMonthsClamped(d: Date, months: number): Date {
-  const day = d.getDate();
-  const result = new Date(d);
-  result.setDate(1);
-  result.setMonth(result.getMonth() + months);
-  const daysInTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
-  result.setDate(Math.min(day, daysInTargetMonth));
-  return result;
-}
-
 export function nextRenewalDate(cycle: BillingCycle, from: Date = new Date()): Date {
-  if (cycle === "monthly") return addMonthsClamped(from, 1);
-  if (cycle === "quarterly") return addMonthsClamped(from, 3);
-  // Yearly: Feb 29 -> Feb 28 on a non-leap target year is the one edge case
-  // setFullYear doesn't handle on its own (it overflows to Mar 1 the same
-  // way setMonth does), so route it through the same clamping helper via
-  // 12 months rather than duplicating the leap-year check here.
-  return addMonthsClamped(from, 12);
+  const d = new Date(from);
+  if (cycle === "monthly") d.setMonth(d.getMonth() + 1);
+  else if (cycle === "quarterly") d.setMonth(d.getMonth() + 3);
+  else d.setFullYear(d.getFullYear() + 1);
+  return d;
 }
