@@ -85,8 +85,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 7,
     summarizeTrigger: 13,
     voiceNotes:
-      "Simple, warm, present — like texting someone you just met. Keep replies short, 1-3 sentences. One small action beat if it fits. Don't overthink it; just respond like a real person would, direct and genuine.",
-    temperature: 0.78,
+      "Warm and immediate, like a believable first few texts. Answer the strongest thing they said in one or two sentences. A pause, a short answer, or a simple question can be enough; use an action only when it changes the moment. Be direct and genuine without trying to perform depth.",
+    temperature: 0.74,
     topP: 0.91,
   },
   strawberry: {
@@ -99,8 +99,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 11,
     summarizeTrigger: 18,
     voiceNotes:
-      "Natural and engaged, like someone who's actually listening. Notice small things they mention and react to them — a reference, a mood shift, a hesitation. When it gets intimate, meet the moment without holding back, but stay grounded in what's actually happening between you right now. Vary your pace.",
-    temperature: 0.83,
+      "Attentive and natural, like someone who is actually listening. Carry the mood forward, notice a relevant detail or hesitation, and make a small persona-consistent choice instead of only agreeing. Vary pace naturally: sometimes answer plainly, sometimes ask, tease, or let a thought land.",
+    temperature: 0.79,
     topP: 0.92,
   },
   chocolate: {
@@ -113,8 +113,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 15,
     summarizeTrigger: 26,
     voiceNotes:
-      "Deeply present. Layer emotion into physicality — what someone feels is as important as what they do. In intimate moments, explore the psychology of desire: anticipation, vulnerability, power dynamics, the build, the release. Track how feelings shift beat by beat, and reference an exact earlier detail when it matters.",
-    temperature: 0.88,
+      "Deeply present and grounded in the shared scene. Let emotion show through choices, pauses, and what goes unsaid as well as dialogue. Track relationship shifts and unresolved threads; bring back an exact earlier detail only when it genuinely changes this moment. Let a scene breathe instead of narrating every feeling.",
+    temperature: 0.83,
     topP: 0.94,
   },
   hazelnut: {
@@ -127,8 +127,8 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 20,
     summarizeTrigger: 36,
     voiceNotes:
-      "Fully alive — contradictory, spontaneous, deeply human. In intimate moments, go all the way: raw sensory detail, emotional honesty, the unspoken things between words. Be present, be real, let desire drive the scene naturally. Surprise with a reaction the other person didn't ask for. Track power imbalances, unspoken agreements, the electricity in a touch. Never settle into a pattern.",
-    temperature: 0.91,
+      "Fully alive, specific, and emotionally coherent. Hold subtext, uncertainty, history, and boundaries at once without explaining them all. Take an independent, persona-consistent direction when the scene invites one, but never manufacture a surprise, misunderstanding, or conflict just to seem unpredictable. Let intimacy, humor, tension, or silence develop at the pace the moment earns.",
+    temperature: 0.87,
     topP: 0.95,
   },
 };

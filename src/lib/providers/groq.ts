@@ -38,19 +38,32 @@ export function getGroqKeys(): { key: string; slot: number }[] {
 // Qwen's "thinking mode" reasoning tokens are wrapped in <think>...</think>.
 // reasoning_format: "hidden" (below) only stops that text from being
 // returned — the model still generates it, and those tokens still count
-// against your TPD/TPM quota. reasoning_effort is the real fix: "none" is
-// documented by Groq as disabling reasoning outright for Qwen 3.6 27B
-// specifically ("default" is the other option, and is what re-enables it).
+// against your TPD/TPM quota (and, on paid tiers, output-token billing).
+// reasoning_effort is the real fix: "none" disables reasoning outright.
 // This app is casual roleplay dialogue, not math/coding, so there's no
 // quality reason to pay for chain-of-thought — Groq's own guidance is to
 // use non-thinking mode for "efficient, general-purpose dialogue" like
-// this. Restricted to exactly qwen/qwen3.6-27b since reasoning_effort's
-// accepted values differ per model family (gpt-oss takes low/medium/high
-// instead) and sending the wrong value can 400.
+// this.
+//
+// Scoped to the qwen3.x family Groq has actually documented "none" for
+// (3, 3.6, 3.8 as of this writing) rather than one exact model string —
+// Groq bumps this app's default model periodically (3.6 -> 3.8 already
+// happened) and each qwen3.x release has so far kept "none" as a valid
+// reasoning_effort value, even though the newer ones (3.8+) also add
+// low/medium/high on top. A hardcoded exact-match here means every future
+// bump silently stops sending reasoning_effort at all — falling back to
+// whatever the model's own hosted default is (3.8's default reasoning
+// tier is "xhigh" when self-hosted; Groq's platform default happens to be
+// "none", but that's Groq's choice to change, not this app's) — and also
+// silently triples MAX_TOKENS below via THINKING_ACTUALLY_ON, since that
+// flag assumes "can't control reasoning_effort" means "thinking is on."
+// Deliberately NOT extended to gpt-oss (accepts low/medium/high instead,
+// and sending "none" there 400s) or non-qwen models generally.
+//
 // Override with GROQ_REASONING_EFFORT=default if you ever want thinking
 // mode back (e.g. testing a task that actually benefits from it).
 const IS_REASONING_MODEL = MODEL.startsWith("qwen/");
-const SUPPORTS_REASONING_EFFORT = MODEL === "qwen/qwen3.6-27b";
+const SUPPORTS_REASONING_EFFORT = /^qwen\/qwen3(\.\d+)?-\d+b$/.test(MODEL);
 const REASONING_EFFORT = process.env.GROQ_REASONING_EFFORT === "default" ? "default" : "none";
 const REASONING_EXTRA_BODY = IS_REASONING_MODEL
   ? {

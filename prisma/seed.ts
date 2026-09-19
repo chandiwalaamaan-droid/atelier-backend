@@ -1,8 +1,8 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { characters as sfwCharacters } from "../sfw-premium-characters-with-assets";
-import { darkTabooCharacters } from "../dark-taboo-characters-with-assets";
 import { animeCharacters } from "../anime-characters-with-assets";
+import innocentCharacters from "./innocent-characters.json";
 
 const prisma = new PrismaClient();
 
@@ -21,26 +21,47 @@ interface SeedCharacter {
   scenePromptTemplate?: string;
 }
 
-async function main() {
-  // dark-taboo-characters.json (the old plain-JSON source) has no avatarUrl/
-  // backgroundUrl fields at all, which is why every explicit character was
-  // being seeded with null avatar/background - the generated
-  // dark-taboo-characters-with-assets.ts file next to it already has the
-  // correct asset paths (and matching files under public/assets/characters/
-  // on the frontend), it just was never wired in here. Use that instead.
-  const jsonCharacters: SeedCharacter[] = darkTabooCharacters.map((c) => ({
-    name: c.name,
-    tagline: c.tagline,
-    avatarEmoji: c.avatarEmoji,
-    accentColor: c.accentColor,
-    personality: c.personality,
-    backstory: c.backstory,
-    greeting: c.greeting,
-    isExplicit: c.isExplicit,
-    avatarUrl: c.avatarUrl,
-    backgroundUrl: c.backgroundUrl,
-  }));
+type CharacterVisuals = Pick<SeedCharacter, "avatarUrl" | "backgroundUrl">;
 
+// The replacement innocent-character pack deliberately contains no image
+// paths. Reuse the existing visual assets only when the replacement has the
+// exact same character name, so a seed run updates the profile text while
+// preserving its matching portrait and scene background. Vesper Hale has no
+// legacy counterpart; her portrait is the supplied custom asset instead.
+const LEGACY_VISUALS_BY_NAME: Record<string, CharacterVisuals> = {
+  "Elena Voss": { avatarUrl: "/assets/characters/elena-voss.png", backgroundUrl: "/assets/characters/backgrounds/elena-voss-bg.png" },
+  "Marcus Reed": { avatarUrl: "/assets/characters/marcus-reed.png", backgroundUrl: "/assets/characters/backgrounds/marcus-reed-bg.png" },
+  "Sophia Laurent": { avatarUrl: "/assets/characters/sophia-laurent.png", backgroundUrl: "/assets/characters/backgrounds/sophia-laurent-bg.png" },
+  "Damien Black": { avatarUrl: "/assets/characters/damien-black.png", backgroundUrl: "/assets/characters/backgrounds/damien-black-bg.png" },
+  "Lila Rose": { avatarUrl: "/assets/characters/lila-rose.png", backgroundUrl: "/assets/characters/backgrounds/lila-rose-bg.png" },
+  "Scarlett Vale": { avatarUrl: "/assets/characters/scarlett-vale.png", backgroundUrl: "/assets/characters/backgrounds/scarlett-vale-bg.png" },
+  "Victor Kane": { avatarUrl: "/assets/characters/victor-kane.png", backgroundUrl: "/assets/characters/backgrounds/victor-kane-bg.png" },
+  "Nadia Voss": { avatarUrl: "/assets/characters/nadia-voss.png", backgroundUrl: "/assets/characters/backgrounds/nadia-voss-bg.png" },
+  "Lilith Crowe": { avatarUrl: "/assets/characters/lilith-crowe.png", backgroundUrl: "/assets/characters/backgrounds/lilith-crowe-bg.png" },
+  "Rhea Blackwood": { avatarUrl: "/assets/characters/rhea-blackwood.png", backgroundUrl: "/assets/characters/backgrounds/rhea-blackwood-bg.png" },
+  "Isabella Voss": { avatarUrl: "/assets/characters/isabella-voss.png", backgroundUrl: "/assets/characters/backgrounds/isabella-voss-bg.png" },
+  "Cassandra Noir": { avatarUrl: "/assets/characters/cassandra-noir.png", backgroundUrl: "/assets/characters/backgrounds/cassandra-noir-bg.png" },
+  "Dr. Elena Hart": { avatarUrl: "/assets/characters/dr.-elena-hart.png", backgroundUrl: "/assets/characters/backgrounds/dr.-elena-hart-bg.png" },
+  "Julian Cross": { avatarUrl: "/assets/characters/julian-cross.png", backgroundUrl: "/assets/characters/backgrounds/julian-cross-bg.png" },
+  "Serena Vale": { avatarUrl: "/assets/characters/serena-vale.png", backgroundUrl: "/assets/characters/backgrounds/serena-vale-bg.png" },
+  "Victoria Black": { avatarUrl: "/assets/characters/victoria-black.png", backgroundUrl: "/assets/characters/backgrounds/victoria-black-bg.png" },
+  "Aria Sinclair": { avatarUrl: "/assets/characters/aria-sinclair.png", backgroundUrl: "/assets/characters/backgrounds/aria-sinclair-bg.png" },
+  "Professor Lena Voss": { avatarUrl: "/assets/characters/professor-lena-voss.png", backgroundUrl: "/assets/characters/backgrounds/professor-lena-voss-bg.png" },
+  "Morgana Crowe": { avatarUrl: "/assets/characters/morgana-crowe.png", backgroundUrl: "/assets/characters/backgrounds/morgana-crowe-bg.png" },
+  "Diana Vale": { avatarUrl: "/assets/characters/diana-vale.png", backgroundUrl: "/assets/characters/backgrounds/diana-vale-bg.png" },
+  "Raven Sinclair": { avatarUrl: "/assets/characters/raven-sinclair.png", backgroundUrl: "/assets/characters/backgrounds/raven-sinclair-bg.png" },
+  "Dr. Amelia Cross": { avatarUrl: "/assets/characters/dr.-amelia-cross.png", backgroundUrl: "/assets/characters/backgrounds/dr.-amelia-cross-bg.png" },
+  "Kira Vale": { avatarUrl: "/assets/characters/kira-vale.png", backgroundUrl: "/assets/characters/backgrounds/kira-vale-bg.png" },
+  "Selene Blackthorn": { avatarUrl: "/assets/characters/selene-blackthorn.png", backgroundUrl: "/assets/characters/backgrounds/selene-blackthorn-bg.png" },
+  "Luna Voss": { avatarUrl: "/assets/characters/luna-voss.png", backgroundUrl: "/assets/characters/backgrounds/luna-voss-bg.png" },
+  "Ophelia Noir": { avatarUrl: "/assets/characters/ophelia-noir.png", backgroundUrl: "/assets/characters/backgrounds/ophelia-noir-bg.png" },
+  "Freya Storm": { avatarUrl: "/assets/characters/freya-storm.png", backgroundUrl: "/assets/characters/backgrounds/freya-storm-bg.png" },
+  "Evelyn Rose": { avatarUrl: "/assets/characters/evelyn-rose.png", backgroundUrl: "/assets/characters/backgrounds/evelyn-rose-bg.png" },
+  "Nyra Shadow": { avatarUrl: "/assets/characters/nyra-shadow.png", backgroundUrl: "/assets/characters/backgrounds/nyra-shadow-bg.png" },
+  "Vesper Hale": { avatarUrl: "/assets/characters/vesper-hale.png", backgroundUrl: "/assets/characters/backgrounds/vesper-hale-bg.png" },
+};
+
+async function main() {
   const sfwSeedCharacters: SeedCharacter[] = sfwCharacters.map((c) => ({
     name: c.name,
     tagline: c.tagline,
@@ -74,10 +95,18 @@ async function main() {
     scenePromptTemplate: c.scenePromptTemplate,
   }));
 
-  const allCharacters: SeedCharacter[] = [...jsonCharacters, ...sfwSeedCharacters, ...animeSeedCharacters];
+  // This file is imported as-is from innocent-characters.json: no profile
+  // text, flags, or fields are rewritten during the seed step.
+  const innocentSeedCharacters: SeedCharacter[] = innocentCharacters;
+
+  const allCharacters: SeedCharacter[] = [
+    ...sfwSeedCharacters,
+    ...animeSeedCharacters,
+    ...innocentSeedCharacters,
+  ];
 
   console.log(
-    `Loaded ${allCharacters.length} characters total (${jsonCharacters.length} explicit + ${sfwSeedCharacters.length} premium + ${animeSeedCharacters.length} anime)`
+    `Loaded ${allCharacters.length} characters total (${sfwSeedCharacters.length} premium + ${animeSeedCharacters.length} anime + ${innocentSeedCharacters.length} innocent)`
   );
 
   let seedUser = await prisma.user.findUnique({
@@ -118,6 +147,7 @@ async function main() {
       select: { id: true },
     });
 
+    const legacyVisuals = LEGACY_VISUALS_BY_NAME[char.name];
     const data: any = {
       tagline: char.tagline,
       avatarEmoji: char.avatarEmoji || "🌸",
@@ -126,8 +156,8 @@ async function main() {
       backstory: char.backstory,
       greeting: char.greeting,
       isExplicit: char.isExplicit,
-      avatarUrl: char.avatarUrl ?? null,
-      backgroundUrl: char.backgroundUrl ?? null,
+      avatarUrl: char.avatarUrl ?? legacyVisuals?.avatarUrl ?? null,
+      backgroundUrl: char.backgroundUrl ?? legacyVisuals?.backgroundUrl ?? null,
       isPublic: true,
     };
     if (char.avatarPrompt) data.avatarPrompt = char.avatarPrompt;

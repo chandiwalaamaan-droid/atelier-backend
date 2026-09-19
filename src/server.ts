@@ -128,6 +128,14 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 const server = app.listen(PORT, () => {
   console.log(`[rolichat-backend] listening on :${PORT}`);
 });
+
+// OPTIMIZATION: Enable HTTP Keep-Alive timeout tuning
+// Render's load balancer has a 60s keep-alive timeout. By setting our server's
+// keepAliveTimeout slightly higher (70s), we ensure the server doesn't close
+// connections before the load balancer does, which would cause 502 errors.
+server.keepAliveTimeout = 70_000; // 70 seconds
+server.headersTimeout = 75_000; // headersTimeout must be > keepAliveTimeout
+
 server.on("error", (err: any) => {
   if (err.code === "EADDRINUSE") {
     console.error(`Port ${PORT} is already in use.`);

@@ -38,6 +38,74 @@ const router = Router();
 
 const MAX_MESSAGE_LENGTH = 4000;
 
+// ---------------------------------------------------------------------------
+// System prompt cache - avoids rebuilding prompts for unchanged characters
+// ---------------------------------------------------------------------------
+// Keyed by characterId + updatedAt timestamp. The system prompt only changes
+// when the character's data changes (name, personality, backstory, etc.), so
+// we can cache it and serve it on subsequent requests without rebuilding.
+// Cache auto-expires after 5 minutes to handle edge cases.
+// ---------------------------------------------------------------------------
+interface CachedPrompt {
+  prompt: string;
+  expiresAt: number;
+}
+const promptCache = new Map<string, CachedPrompt>();
+const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedPrompt(key: string): string | null {
+  const cached = promptCache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    promptCache.delete(key);
+    return null;
+  }
+  return cached.prompt;
+}
+
+function setCachedPrompt(key: string, prompt: string): void {
+  // Limit cache size to prevent memory leaks
+  if (promptCache.size > 1000) {
+    // Delete oldest entries
+    const now = Date.now();
+    for (const [k, v] of promptCache) {
+      if (now > v.expiresAt) promptCache.delete(k);
+    }
+    // If still too large, delete first 100 entries
+    if (promptCache.size > 1000) {
+      let count = 0;
+      for (const k of promptCache.keys()) {
+        if (count++ >= 100) break;
+        promptCache.delete(k);
+      }
+    }
+  }
+  promptCache.set(key, { prompt, expiresAt: Date.now() + PROMPT_CACHE_TTL_MS });
+}
+
+// ---------------------------------------------------------------------------
+// SSE Keep-Alive - prevents proxy/load balancer timeout on idle connections
+// ---------------------------------------------------------------------------
+// Many proxies (nginx, Render, Cloudflare) close idle connections after 30-60s.
+// If a provider is slow to respond, the SSE connection can drop before any
+// data is sent. Sending periodic keep-alive comments prevents this.
+// ---------------------------------------------------------------------------
+const KEEP_ALIVE_INTERVAL_MS = 15_000; // 15 seconds - well under typical proxy timeouts
+
+function startKeepAlive(res: import("express").Response): () => void {
+  const timer = setInterval(() => {
+    try {
+      res.write(`: keep-alive ${Date.now()}\n\n`);
+    } catch {
+      // Connection closed, stop the timer
+      clearInterval(timer);
+    }
+  }, KEEP_ALIVE_INTERVAL_MS);
+  // Don't keep the process alive just for keep-alive
+  if (timer.unref) timer.unref();
+  return () => clearInterval(timer);
+}
+
 // POST /api/chat/bulk-delete — wipes conversation history (messages + memory)
 // for a set of characters, or for every character the user owns, in one go.
 // This mirrors the existing DELETE /:characterId "reset conversation"
@@ -94,9 +162,14 @@ router.get("/:characterId", asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Character not found." });
   }
 
+  // OPTIMIZATION: Only select fields needed for chat rendering.
+  // NOTE: id and createdAt MUST stay — the frontend uses each message's id
+  // to target edit / delete / regenerate requests, and this endpoint is the
+  // only place it gets that id from.
   const messages = await prisma.message.findMany({
     where: { characterId, userId },
     orderBy: { createdAt: "asc" },
+    select: { id: true, role: true, content: true, createdAt: true },
   });
 
   const relationshipLevel = computeRelationshipLevel(messages.length, character.explicitEverUsed);
@@ -161,28 +234,27 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // client's explicit toggle. The toggle (set by the frontend based on the
   // character's isExplicit flag + user preference) is the user's actual
   // intent — for 18+ characters, it's true; for innocent characters, it's
-  // false. AND-ing it with engine.explicitMode ensures that even when a
-  // named engine is used (which all have explicitMode: true), an innocent
-  // character still gets the SFW provider chain (NVIDIA-first), not the
-  // explicit chain (Groq-first). Only when both the engine supports it AND
-  // the client wants it does the explicit chain activate.
+  // false. AND-ing it with the engine's own explicitMode flag keeps this purely a
+  // content-framing signal now: it gates the system prompt's content-mode
+  // framing, spice/style parsing, and relationship tracking below. It no
+  // longer has any effect on provider chain order — see groqFirst below.
   const clientExplicitMode = body.explicitMode === true;
   const explicitMode = engine ? engine.explicitMode && clientExplicitMode : clientExplicitMode;
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
-  // Hazelnut gets Groq tried before NVIDIA (everything after those two —
-  // SambaNova, Cloudflare, Ollama — is unaffected); every other engine, and
-  // manual/no-engine requests, keep the default NVIDIA-first order. See
-  // buildChain's comment in providers/index.ts for the full chain order.
-  // explicitMode reorders the chain for NSFW chats: Groq -> SambaNova ->
-  // Cloudflare -> NVIDIA -> Ollama, so NVIDIA only answers NSFW as a last
-  // resort. SFW chats use the default NVIDIA-first chain.
+  // Every request — SFW or NSFW/explicit — uses the single default provider
+  // chain (NVIDIA first). The only exception is Hazelnut (supreme tier,
+  // "Ultimate Experience"), which always routes through the Groq-first
+  // chain — Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama —
+  // regardless of the client's explicitMode toggle. See buildChain's
+  // comment in providers/index.ts for the full chain order.
+  const groqFirst = engine?.id === "hazelnut";
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, preferGroqFirst: engine.id === "hazelnut", explicitMode }
-    : { maxTokens, explicitMode };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, groqFirst }
+    : { maxTokens, groqFirst };
   const recentWindow = engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =
@@ -208,6 +280,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   if (isEdit) {
     const target = await prisma.message.findFirst({
       where: { id: editMessageId as string, characterId, userId, role: "user" },
+      select: { id: true, createdAt: true, content: true },
     });
     if (!target) {
       return res.status(404).json({ error: "That message couldn't be found." });
@@ -234,6 +307,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     const last = await prisma.message.findFirst({
       where: { characterId, userId },
       orderBy: { createdAt: "desc" },
+      select: { id: true, role: true },
     });
     if (!last) {
       return res.status(400).json({ error: "Nothing to regenerate yet." });
@@ -245,10 +319,13 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     });
   }
 
+  // OPTIMIZATION: Fetch message history and character data in parallel
+  // Only select the fields we need (role, content, createdAt) instead of full rows
   const allSinceSummary = await prisma.message.findMany({
     where: { characterId, userId },
     orderBy: { createdAt: "asc" },
     skip: character.summarizedThrough,
+    select: { id: true, role: true, content: true, createdAt: true },
   });
 
   const relevant = regenTargetId
@@ -284,15 +361,40 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     minutesSinceLastMessage = (gapPair[1].createdAt.getTime() - gapPair[0].createdAt.getTime()) / 60000;
   }
 
-  const system = buildSystemPrompt(character, {
-    explicitMode,
-    spiceLevel,
-    roleplayStyle,
-    sceneDirective,
-    voiceNotes,
-    engine,
-    minutesSinceLastMessage,
-  });
+  // OPTIMIZATION: Use cached system prompt when character hasn't changed.
+  // IMPORTANT: the key must cover every input that changes the generated
+  // text, not just the character's static fields — otherwise a stale
+  // cached prompt (missing the latest folded-in memory, or built with a
+  // different voice-notes/time-gap value) gets served for up to
+  // PROMPT_CACHE_TTL_MS. buildSystemPrompt also reads character.memorySummary
+  // and character.examples (which change as the conversation progresses via
+  // maybeSummarize), opts.voiceNotes (a per-request value), and
+  // minutesSinceLastMessage (which drives the "time gap" block, gated to
+  // >=10 minutes and rounded to minute/hour/day — bucketed the same way
+  // here so we don't fragment the cache over meaningless sub-minute noise).
+  const intelligenceForCache = engine?.intelligence ?? 5;
+  const timeGapBucket =
+    intelligenceForCache < 6 || minutesSinceLastMessage === undefined || minutesSinceLastMessage < 10
+      ? "none"
+      : minutesSinceLastMessage < 60
+      ? `m${Math.round(minutesSinceLastMessage)}`
+      : minutesSinceLastMessage < 60 * 24
+      ? `h${Math.round(minutesSinceLastMessage / 60)}`
+      : `d${Math.round(minutesSinceLastMessage / (60 * 24))}`;
+  const promptCacheKey = `${characterId}:${character.name}:${character.personality}:${character.backstory}:${character.roleplayNotes}:${character.tagline}:${character.memorySummary ?? ""}:${character.examples ?? ""}:${engine?.id ?? "none"}:${explicitMode}:${spiceLevel ?? "none"}:${roleplayStyle ?? "none"}:${sceneDirective ?? "none"}:${voiceNotes ?? "none"}:${timeGapBucket}`;
+  let system = getCachedPrompt(promptCacheKey);
+  if (!system) {
+    system = buildSystemPrompt(character, {
+      explicitMode,
+      spiceLevel,
+      roleplayStyle,
+      sceneDirective,
+      voiceNotes,
+      engine,
+      minutesSinceLastMessage,
+    });
+    setCachedPrompt(promptCacheKey, system);
+  }
   const chatMessages = [
     { role: "system" as const, content: system },
     ...recentHistory.map((m: { role: string; content: string }) => ({
@@ -315,6 +417,11 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
     "Cache-Control": "no-cache, no-transform",
     "X-Accel-Buffering": "no",
   });
+
+  // OPTIMIZATION: Start SSE keep-alive to prevent proxy timeout
+  // Proxies (nginx, Render, Cloudflare) often close idle connections after 30-60s.
+  // If a provider is slow to respond, periodic keep-alive comments prevent disconnection.
+  const stopKeepAlive = startKeepAlive(res);
 
   // Surface the paywall downgrade to the client (unlike provider failover
   // above, this one names names on purpose — it's the hook for an upgrade
@@ -339,6 +446,22 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // saving) whatever text had already streamed out.
   const stopController = new AbortController();
   req.on("close", () => stopController.abort());
+
+  // NOTE: no request-level hard timeout here on purpose. streamChatWithFallback
+  // already has a much better mechanism for a stuck/slow provider: each
+  // candidate has its own tuned timeoutMs (see providers/index.ts and
+  // openaiCompatible.ts) covering time-to-first-token and mid-stream stalls,
+  // and a circuit breaker that opens after repeated timeouts so a bad
+  // provider gets skipped on future requests too. A single global timer
+  // sharing stopController with the client's own Stop-button abort would
+  // undo that: once it fires, streamChatWithFallback sees the same signal
+  // as aborted and gives up on the ENTIRE chain immediately — it doesn't
+  // move on to the next candidate, it just kills the request. With several
+  // providers chained (Groq x4, NVIDIA x3, SambaNova x2, Cloudflare...),
+  // that meant a slow-but-not-dead provider partway through the chain could
+  // cause the whole reply to fail instead of falling through to the next
+  // one, and the user waited the full ceiling for nothing. The per-provider
+  // timeouts already fail fast on their own.
 
   try {
     // Live-stream length cutoff, plus sentence-boundary buffering so the
@@ -450,23 +573,33 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
 
     if (fullText.trim().length > 0) {
       const finalText = cleanAssistantResponse(fullText.trim(), intelligence);
+      // NOTE: the save must complete BEFORE we count messages for the
+      // relationship level — they are not independent, so this cannot be
+      // parallelized with Promise.all without racing the count against the
+      // create() and occasionally reporting a stale (one message short)
+      // level. reportRelationshipLevel already parallelizes its own two
+      // independent reads internally, so we don't lose that benefit.
       if (regenTargetId) {
         await prisma.message.delete({ where: { id: regenTargetId } });
       }
       await prisma.message.create({
         data: { characterId, userId, role: "assistant", content: finalText },
       });
+
+      if (!stopController.signal.aborted) {
+        const relLevel = await reportRelationshipLevel(characterId, userId, explicitMode);
+        res.write(encodeEvent({ type: "relationship", level: relLevel }));
+      }
     }
     console.log(
       stopController.signal.aborted
         ? `[chat] reply stopped by client mid-stream (via ${provider})`
         : `[chat] reply generated via ${provider}`
     );
+    // Stop keep-alive timer
+    stopKeepAlive();
     // If the client already disconnected, res.write/res.end below are
     // harmless no-ops — the assistant text above is already saved.
-    if (!stopController.signal.aborted) {
-      res.write(encodeEvent({ type: "relationship", level: await reportRelationshipLevel(characterId, userId, explicitMode) }));
-    }
     res.end();
 
     // Fire-and-forget: fold older messages into the running memory summary
@@ -483,6 +616,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       // count — keep the client's bar in sync either way.
       res.write(encodeEvent({ type: "relationship", level: await reportRelationshipLevel(characterId, userId, explicitMode) }));
     }
+    stopKeepAlive();
     res.end();
   }
 }));
@@ -665,16 +799,20 @@ router.post("/:characterId/speak", asyncHandler(async (req, res) => {
 // freshly computed relationship level. Pure DB reads/writes — no provider
 // call, so this never costs API tokens.
 async function reportRelationshipLevel(characterId: string, userId: string, explicitMode: boolean): Promise<number> {
-  const character = await prisma.character.findUnique({
-    where: { id: characterId },
-    select: { explicitEverUsed: true },
-  });
+  // OPTIMIZATION: Parallelize the two independent DB reads
+  const [character, totalMessages] = await Promise.all([
+    prisma.character.findUnique({
+      where: { id: characterId },
+      select: { explicitEverUsed: true },
+    }),
+    prisma.message.count({ where: { characterId, userId } }),
+  ]);
+
   let explicitEverUsed = character?.explicitEverUsed ?? false;
   if (explicitMode && !explicitEverUsed) {
     await prisma.character.update({ where: { id: characterId }, data: { explicitEverUsed: true } });
     explicitEverUsed = true;
   }
-  const totalMessages = await prisma.message.count({ where: { characterId, userId } });
   return computeRelationshipLevel(totalMessages, explicitEverUsed);
 }
 
@@ -700,6 +838,7 @@ async function maybeSummarize(
     orderBy: { createdAt: "asc" },
     skip: character.summarizedThrough,
     take: toFoldCount,
+    select: { id: true, role: true, content: true, createdAt: true },
   });
   if (toFold.length === 0) return;
 

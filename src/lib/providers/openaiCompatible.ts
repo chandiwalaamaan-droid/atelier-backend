@@ -1,3 +1,5 @@
+import { recordTokenUsage } from "./tokenStats";
+
 /**
  * Groq and NVIDIA NIM both expose an OpenAI-compatible
  * /chat/completions endpoint, so they share this streaming parser and
@@ -97,6 +99,16 @@ function stripThinkTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "");
 }
 
+function providerKeyFor(baseUrl: string, model: string): string {
+  let host = baseUrl;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    /* keep raw baseUrl if it's not a parseable URL for some reason */
+  }
+  return `${host}/${model}`;
+}
+
 async function readErrorBody(res: Response): Promise<string> {
   // Fold the response body into the thrown error so ProviderBreaker.trip()
   // can parse a provider's own "retry in Xs" hint out of it, instead of
@@ -172,7 +184,14 @@ export async function streamOpenAICompatibleChat(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: true, max_tokens: maxTokens, ...extraBody }),
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          stream_options: { include_usage: true },
+          max_tokens: maxTokens,
+          ...extraBody,
+        }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -193,6 +212,7 @@ export async function streamOpenAICompatibleChat(
     let buffer = "";
     let fullText = "";
     let finishReason: string | null = null;
+    let usage: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | null = null;
     let chunkTimer: ReturnType<typeof setTimeout> | null = null;
     // Deliberately NOT the same budget as the time-to-first-token timer
     // above. `timeoutMs` is tuned to fail over to the next provider fast
@@ -264,6 +284,7 @@ export async function streamOpenAICompatibleChat(
           }
           const reason: string | undefined = parsed?.choices?.[0]?.finish_reason;
           if (reason) finishReason = reason;
+          if (parsed?.usage) usage = parsed.usage;
         }
         if (clientAborted) return fullText;
       }
@@ -276,6 +297,15 @@ export async function streamOpenAICompatibleChat(
 
       if (fullText.trim().length === 0) {
         throw new EmptyResponseError(baseUrl, finishReason);
+      }
+
+      if (usage) {
+        recordTokenUsage(
+          providerKeyFor(baseUrl, model),
+          usage.prompt_tokens ?? 0,
+          usage.completion_tokens ?? 0,
+          usage.prompt_tokens_details?.cached_tokens ?? 0
+        );
       }
 
       return fullText;
@@ -329,6 +359,14 @@ export async function completeOpenAICompatibleChat(
     const text: string = stripThinkTags(data?.choices?.[0]?.message?.content ?? "");
     if (text.trim().length === 0) {
       throw new EmptyResponseError(baseUrl, finishReason);
+    }
+    if (data?.usage) {
+      recordTokenUsage(
+        providerKeyFor(baseUrl, model),
+        data.usage.prompt_tokens ?? 0,
+        data.usage.completion_tokens ?? 0,
+        data.usage.prompt_tokens_details?.cached_tokens ?? 0
+      );
     }
     return text;
   } finally {

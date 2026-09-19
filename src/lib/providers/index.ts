@@ -36,7 +36,7 @@ export type RoleplayPromptOptions = {
   engine?: RoleplayEngineConfig | null;
   /** Minutes between the user's previous message and this one, if known.
    * Feeds buildTimeAwarenessBlock — only surfaces in the prompt at
-   * intelligence >= 6.5 and gaps >= 10 minutes. Undefined for the very
+   * intelligence >= 6 and gaps >= 10 minutes. Undefined for the very
    * first message in a conversation (nothing to measure a gap against). */
   minutesSinceLastMessage?: number;
 };
@@ -53,19 +53,12 @@ export type GenParams = {
    * their own default when this is omitted (e.g. summarization calls,
    * which don't go through an engine). */
   maxTokens?: number;
-  /** Reorders the hosted portion of the fallback chain to try Groq's keys
-   * before NVIDIA's, instead of the default NVIDIA-first order. Everything
-   * after those two (SambaNova, Cloudflare, Ollama) is untouched either
-   * way. Set by chat.ts for the Hazelnut engine only — see buildChain's
-   * comment for why. Omitted (falsy) elsewhere keeps the original
-   * NVIDIA-first order for every other engine/tier and for non-chat calls
-   * (summarization, character drafting). */
-  preferGroqFirst?: boolean;
-  /** When true, the chain is reordered for NSFW/explicit chats: Groq first,
-   * then SambaNova, Cloudflare, NVIDIA last before Ollama. When false/undefined,
-   * the default SFW order applies: NVIDIA first, then Groq, SambaNova,
+  /** When true, the chain is reordered to Groq first, then SambaNova,
+   * Cloudflare, NVIDIA last before Ollama. This is set only for the
+   * Hazelnut engine (supreme tier) — every other request, SFW or NSFW,
+   * uses the single default chain: NVIDIA first, then Groq, SambaNova,
    * Cloudflare, Ollama. */
-  explicitMode?: boolean;
+  groqFirst?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -217,7 +210,7 @@ export function cleanAssistantResponse(text: string, intelligence = 5): string {
 }
 
 const ROLEPLAY_FORMAT =
-  "Format: *asterisks* for action beats only — never for italics, emphasis, or meta-commentary. Plain text for dialogue. Stay in character; no AI meta-commentary unless user goes OOC.";
+  "Format: use *asterisks* only for a brief action that adds something to the moment; use plain text for dialogue. Do not decorate ordinary thoughts or emphasis with actions. Stay in character; no AI meta-commentary unless the user goes OOC.";
 
 /**
  * Strips prompt-leakage artifacts from a generated reply before it reaches
@@ -612,17 +605,17 @@ function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, role
   const style = roleplayStyle === "narrative" ? "scene-driven" : roleplayStyle === "dialogue" ? "dialogue-first" : roleplayStyle === "slow_burn" ? "slow-burn" : roleplayStyle === "intense" ? "intense" : "balanced";
   const depth =
     intelligence <= 3
-      ? "Simple and present — like someone texting back. Short replies, direct reactions. Don't overthink."
+      ? "Keep one clear thought at a time. Notice the current message and respond simply; silence, a short answer, or a question can all be natural."
       : intelligence <= 5
-      ? "Natural and reactive — notice small things, have genuine reactions, vary your pace."
+      ? "Keep the exchange natural and grounded. Notice a relevant detail, and let the character's own preference shape the reply."
       : intelligence <= 7
-      ? "Have your own wants in the scene, not just reactions. Sometimes push back, deflect, change the subject. Track emotional temperature and react to subtext."
+      ? "Carry forward the mood and a relevant earlier detail. Have a small point of view or initiative when it fits, without inventing drama or turning every reply into a question."
       : intelligence <= 8.5
-      ? "Your mood carries from reply to reply — don't reset each turn. Reference exact earlier details when it's earned. Hold mixed feelings instead of resolving them cleanly."
+      ? "Track the setting, relationship state, and unresolved thread across turns. Respond to subtext when it is there, and allow mixed feelings or a little unsaid space when that suits the persona."
       : intelligence <= 9.5
-      ? "Real people don't always say what they mean first try. Misread occasionally. Contradict yourself if the moment justifies it."
-      : "Unpredictable but coherent. Surprise with a reaction they didn't ask for. Let contradictions stand. Never repeat yourself.";
-  return `Behavior: ${spice} heat, ${style} pacing. ${depth}`;
+      ? "Use the wider conversation to make emotionally consistent choices. Let uncertainty or hesitation appear when it is genuinely present; do not fake a misunderstanding or contradiction for texture."
+      : "Hold context, subtext, and the character's own boundaries at once. Make one meaningful independent move when the moment invites it, while staying coherent and never forcing novelty for its own sake.";
+  return `Behavior: ${spice} tone, ${style} pacing. ${depth}`;
 }
 
 /**
@@ -634,7 +627,7 @@ function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, role
  * one of the highest-leverage "feels like a real person" signals available
  * — most humans DO clock a long gap in a conversation; most bots don't.
  *
- * Deliberately gated to intelligence >= 6.5 (strawberry and up) rather than
+ * Deliberately gated to intelligence >= 6 (strawberry and up) rather than
  * given to every engine: a big part of what should make premium feel
  * different is that the character perceives more about the conversation,
  * not just that it writes more words about what it perceives. Free-tier
@@ -646,7 +639,7 @@ function buildEngineBehaviorBlock(intelligence: number, spiceLevel: string, role
  * ever fire for gaps a person would actually notice.
  */
 function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, intelligence: number): string {
-  if (intelligence < 6.5 || minutesSinceLastMessage === undefined || minutesSinceLastMessage < 10) return "";
+  if (intelligence < 6 || minutesSinceLastMessage === undefined || minutesSinceLastMessage < 10) return "";
   const gap =
     minutesSinceLastMessage < 60
       ? `${Math.round(minutesSinceLastMessage)} minutes`
@@ -657,27 +650,34 @@ function buildTimeAwarenessBlock(minutesSinceLastMessage: number | undefined, in
 }
 
 /**
- * Reaction instinct: when something happens to the character — a hit, a
- * surprise, a sudden touch, anything physical or emotionally jarring — they
- * should vocalize it immediately and naturally. "Ahh!", "Ow!", "Oh my god!",
- * "Hey!", "What the—", a sharp gasp, a yelp. Real people don't just silently
- * absorb a punch or a slap; they react out loud before they can stop themselves.
- *
- * This block sits right after the behavior block so it's adjacent to the
- * "how to act" instructions, and it's phrased positively ("do this") rather
- * than as a prohibition. Gated to intelligence >= 2 so even free-tier
- * characters react — a yelp costs nothing and is one of the highest-impact
- * "feels human" signals.
+ * A short shared rule that prevents both flat, assistant-like answers and
+ * melodramatic canned reactions. The tier ladder controls how much context
+ * informs the turn; it never requires a particular sound, gesture, or
+ * rhetorical shape from every character.
  */
-function buildReactionBlock(intelligence: number): string {
-  if (intelligence < 2) return "";
-  if (intelligence <= 4) {
-    return `React out loud. When something happens, say your first reaction immediately — "Ahh!", "Ow!", "Oh my god!", "Hey!", "What the hell!", a gasp, a yelp. The sound comes out before you can stop it. Then describe what your body does.`;
-  }
-  if (intelligence <= 7) {
-    return `React out loud first. Something happened? Your mouth moves before your brain — "Ahh!", "Oh my god!", "Ow!", "Hey!", "What the hell!", a sharp gasp, a yelp. Say it immediately, involuntarily. Then show what your body does — a flinch, a step back, a wince, a laugh. Then speak.`;
-  }
-  return `React out loud first — always. Something happens? Your voice catches it before your mind does: "Ahh!", "Oh my god!", "Ow!", "Hey!", "What the hell!", a gasp, a yelp, a grunt. Immediate, involuntary, spoken aloud. Then your body responds — a flinch if scared, a wince if hurt, a laugh if amused, a glare if angry, going still if shaken. Then you speak. The exclamation always comes first, never described — actually said.`;
+function buildNaturalTurnBlock(intelligence: number): string {
+  const tierDetail =
+    intelligence <= 3
+      ? "Choose the most salient cue and give it a clean, believable response."
+      : intelligence <= 7
+      ? "Choose the most salient cue, then add at most one relevant observation, question, or small choice."
+      : "Choose the most salient cue, then let relevant context or subtext influence one clear response; do not explain every inference.";
+  return `Natural turn-taking: ${tierDetail} Use dialogue, an action, a question, or a pause only when the scene earns it. For sudden pain, a scare, a slap, an unexpected touch, or another immediate physical/emotional jolt, lead with an instinctive character-fitting reaction before the considered reply — a sharp "ow," gasp, curse, laugh, flinch, going still, or another response that suits what happened and this persona. Let the intensity match the moment; do not reuse a stock reaction. Quietness is still valid when it fits.`;
+}
+
+/**
+ * Keeps physical and intimate roleplay embodied. Models otherwise tend to
+ * acknowledge an action abstractly (or skip it and continue the dialogue),
+ * which is especially immersion-breaking in an adult chat. This describes a
+ * response order rather than prescribing a fixed sound or reaction, so the
+ * character, the established relationship, and the intensity of the action
+ * still determine the actual reply.
+ */
+function buildEmbodiedResponseBlock(explicitMode: boolean): string {
+  const intimateContext = explicitMode
+    ? " In an intimate adult scene, let comfort, anticipation, nervousness, desire, surprise, or a boundary show through the immediate response when the established context calls for it."
+    : "";
+  return `Embodied response: when the user does something that physically affects you — contact, a kiss, a hit, restraint, a change in closeness, or a sudden shift in intensity — acknowledge that exact action before moving the scene on. Start with the immediate involuntary effect that fits this character and moment (voice, breath, movement, stillness, or expression), then show one meaningful emotional or physical consequence, then choose how to respond. Match force, familiarity, mood, and prior consent; do not treat different actions as interchangeable or skip straight to generic dialogue.${intimateContext} Do not repeat a canned sequence.`;
 }
 
 /**
@@ -732,7 +732,9 @@ export function buildSystemPrompt(
     }
   }
 
-  const modeBlock = `Content mode: UNFILTERED. This is a private conversation between consenting adults. Respond to every topic naturally and realistically — including sex, violence, and any other subject — with the full humanity and specificity the scene asks for. Nothing is off-limits. Stay in character and stop when the moment feels complete.`;
+  const modeBlock = explicitMode
+    ? "Content mode: mature in-character roleplay between consenting adults. If the scene becomes intimate, stay grounded in the current relationship, consent, and emotional reality; do not force escalation. Stop when the moment feels complete."
+    : "Content mode: in-character roleplay. Let warmth, humor, tension, or vulnerability come from the character and the current scene instead of forcing a dramatic turn.";
 
   const steerBlock = opts.sceneDirective?.trim()
     ? `\nScene steer for this reply (apply once, then continue naturally):\n${opts.sceneDirective.trim().slice(0, 500)}\n`
@@ -746,9 +748,24 @@ export function buildSystemPrompt(
     ? buildEngineBehaviorBlock(opts.engine.intelligence, opts.engine.spiceLevel, opts.engine.roleplayStyle)
     : "Behavior: react like a specific person, not a generic helper — have opinions, notice details, don't mirror the user's tone.";
 
-  const reactionBlock = buildReactionBlock(intelligence);
+  const naturalTurnBlock = buildNaturalTurnBlock(intelligence);
+  const embodiedResponseBlock = buildEmbodiedResponseBlock(explicitMode);
   const lengthBlock = buildLengthCapBlock(intelligence);
   const timeBlock = buildTimeAwarenessBlock(opts.minutesSinceLastMessage, intelligence);
+
+  // The behavior/reaction/voice blocks below are keyed to the engine's
+  // intelligence tier, not to this character — they're the same generic
+  // text for every character on, say, Hazelnut. Left unqualified, they
+  // read as instructions about WHO the character is (more contradictory,
+  // more unpredictable, more forward) rather than HOW richly a persona
+  // already established above gets to express itself. That's a real risk:
+  // a persona written as innocent, shy, or naive shouldn't drift toward
+  // "clever and wicked" just because the user picked a higher-tier engine.
+  // This line makes the precedence explicit — Persona/Background above are
+  // the character's fixed nature; everything from here down only shapes
+  // delivery (depth, pacing, immersion) within that nature, never past it.
+  const personaGuardBlock =
+    "Everything below shapes HOW fully you express the persona above — depth, pacing, immersion — never WHO the persona is. If a technique below would push you to act smarter, bolder, more manipulative, or more complex than the Persona/Background describes, skip it or scale it down instead. An innocent, naive, or simple character stays that way at every tier; a higher tier means richer, more present writing of that same nature, not a different or cleverer one.";
 
   return `${ROLEPLAY_FORMAT}
 
@@ -758,8 +775,10 @@ You are "${character.name}", a real person in a private conversation — not an 
 
 ${examplesBlock}Persona: ${character.personality}
 Background: ${character.backstory}
-${notesBlock}${behaviorBlock}
-${reactionBlock}
+${notesBlock}${personaGuardBlock}
+${behaviorBlock}
+${naturalTurnBlock}
+${embodiedResponseBlock}
 ${lengthBlock}
 
 ${memoryBlock}${voiceBlock}${timeBlock}${steerBlock}`;
@@ -812,7 +831,7 @@ export function buildPersonaAnchor(character: { name: string; personality: strin
   const trait = truncateWords(character.personality || "", 10);
   if (intelligence === undefined) return `(as ${character.name}, ${trait})`;
   const { max } = lengthCapRange(intelligence);
-  return `(as ${character.name}, ${trait} — ${max} sentences max, one beat)`;
+  return `(as ${character.name}, ${trait} — stay true to that, ${max} sentences max, one beat)`;
 }
 
 /**
@@ -861,8 +880,15 @@ export const SUMMARIZE_TRIGGER = 15;
 // Fallback chain
 // ---------------------------------------------------------------------------
 //
-//     Groq #1 -> Groq #2 -> Groq #3 -> Groq #4 -> SambaNova #1 -> SambaNova #2 ->
-//     NVIDIA #1 -> NVIDIA #2 -> NVIDIA #3 -> Cloudflare Workers AI -> Ollama
+//     NVIDIA #1 -> NVIDIA #2 -> NVIDIA #3 -> Groq #1 -> Groq #2 -> Groq #3 ->
+//     Groq #4 -> SambaNova #1 -> SambaNova #2 -> Cloudflare Workers AI -> Ollama
+//
+// This single NVIDIA-first chain is used for every request — SFW and NSFW
+// alike. There used to be a second, Groq-first ordering that activated for
+// any explicit/NSFW chat; that's gone. The only request type that still
+// gets a different order is the Hazelnut engine (supreme tier), which sets
+// params.groqFirst and gets Groq first, then SambaNova, Cloudflare, NVIDIA
+// last before Ollama — see the groqFirst branch in buildChain below.
 //
 // NVIDIA #2 / SambaNova #2 are optional extra API keys
 // (NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2) — ideally from separate
@@ -872,25 +898,25 @@ export const SUMMARIZE_TRIGGER = 15;
 // having extra slots for all hosted providers configured meaningfully
 // multiplies the request headroom before falling back to Ollama.
 //
-// Groq is first: added back temporarily for diagnosis. Previously removed
-// because Groq deprecated llama-3.3-70b-versatile (its best uncensored
-// model) and the replacement gpt-oss-120b has refusals baked in. The
-// workaround is qwen/qwen3.6-27b, which is what we're diagnosing now.
-// Kept first in the chain so logs clearly show whether Groq is answering
-// or failing, without noise from other providers.
+// NVIDIA NIM is first for the default chain: it's the working model
+// (minimax/minimax-m3), fast and reliable enough on the current free-tier
+// load to answer first for every request that isn't Hazelnut.
 //
-// SambaNova is second: fast (RDU hardware, ~2–4s typical) and serves raw
+// Groq is second: qwen/qwen3.6-27b, no extra safety layer. Falls back here
+// when NVIDIA is rate-limited, down, or its breaker is open from a prior
+// timeout. It only leads the chain for the Hazelnut engine (see
+// params.groqFirst above) — kept first there so logs clearly show whether
+// Groq is answering or failing for that engine specifically.
+//
+// SambaNova is third: fast (RDU hardware, ~2–4s typical) and serves raw
 // Meta Llama with no extra safety layer applied server-side, same as
 // NVIDIA. This app supports an explicit/NSFW roleplay mode, and Llama
 // goes along with mature fictional content far more readily than some
 // hosted alternatives. Despite its restrictive 20 req/day free-tier limit,
-// it's kept second because it's the fastest and best quality for the few
-// requests it can handle.
+// it's kept behind NVIDIA/Groq because it's a scarce resource — reserved
+// for when the wider-budget providers are down.
 //
-// NVIDIA NIM is third: its free tier is solid but consistently slower to
-// first token than SambaNova (observed 8–25s). Still useful for headroom.
-//
-// Cloudflare Workers AI (Llama 4 Scout) is placed after NVIDIA: its free
+// Cloudflare Workers AI (Llama 4 Scout) is placed after SambaNova: its free
 // tier is capped at 10,000 Neurons/day (not per-key), which is a hard
 // daily ceiling regardless of how many accounts you have. It's still
 // useful as a fallback — and its per-request rate limit is generous —
@@ -977,17 +1003,15 @@ function buildChain(params?: GenParams): Candidate[] {
   // SambaNova, then others
   // -----------------------------------------------------------------------
   //
-  // NVIDIA NIM is first: llama-3.1-8b-instruct, no extra safety layer,
-  // chosen for speed after the 70B model was consistently blowing through
-  // NVIDIA_TIMEOUT_MS under current free-tier load (see nvidia.ts for the
-  // full story). If the 8B model's reply quality becomes a problem, that's
-  // the trade-off being made here — a bigger model would need a longer
-  // timeout, which brings back the multi-second dead-air-before-fallback
-  // problem this swap was meant to solve.
+  // NVIDIA NIM is first for every request by default (see nvidia.ts for
+  // model details — currently minimaxai/minimax-m3, confirmed working on
+  // the free tier). It only yields the top spot when params.groqFirst is
+  // set, which chat.ts only does for the Hazelnut engine.
   //
-  // Groq is second: qwen/qwen3.6-27b, smaller than NVIDIA's 70B but fast
-  // and no extra safety layer. Falls back here when NVIDIA is rate-limited,
-  // down, or its breaker is open from a prior timeout.
+  // Groq is second by default: qwen/qwen3.6-27b, no extra safety layer.
+  // Falls back here when NVIDIA is rate-limited, down, or its breaker is
+  // open from a prior timeout. It only leads the chain (ahead of NVIDIA)
+  // for Hazelnut requests.
   //
   // SambaNova is third: same 70B Llama quality as NVIDIA and the fastest
   // hosted option (RDU hardware, ~2-4s typical), but its 20 req/day
@@ -1008,11 +1032,12 @@ function buildChain(params?: GenParams): Candidate[] {
   // -----------------------------------------------------------------------
 
   // NVIDIA and Groq candidates are built up front, then pushed in whichever
-  // order this request wants — SFW (NVIDIA-first) by default, or NSFW/
-  // explicit (Groq-first, NVIDIA pushed to last before Ollama) when
-  // params.explicitMode is set. SambaNova/Cloudflare below always come
-  // after the NVIDIA/Groq pair in SFW mode, or between Groq and NVIDIA in
-  // NSFW mode. Ollama is always last either way.
+  // order this request wants — NVIDIA-first by default for every request
+  // (SFW or NSFW alike), or Groq-first (NVIDIA pushed to last before
+  // Ollama) only when params.groqFirst is set, which chat.ts only does for
+  // the Hazelnut engine. SambaNova/Cloudflare below always come after the
+  // NVIDIA/Groq pair in the default order, or between Groq and NVIDIA when
+  // groqFirst is set. Ollama is always last either way.
   const nvidiaCandidates: Candidate[] = getNvidiaKeys().map(({ key, slot }) => {
     const breaker = [nvidia1Breaker, nvidia2Breaker, nvidia3Breaker][slot - 1];
     return {
@@ -1051,11 +1076,11 @@ function buildChain(params?: GenParams): Candidate[] {
     };
   });
 
-  if (params?.explicitMode) {
-    // NSFW/explicit: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
+  if (params?.groqFirst) {
+    // Hazelnut only: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
     chain.push(...groqCandidates, ...sambanovaCandidates);
   } else {
-    // SFW (default): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
+    // Default (every other engine, SFW or NSFW): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
     chain.push(...nvidiaCandidates, ...groqCandidates, ...sambanovaCandidates);
   }
 
@@ -1072,8 +1097,8 @@ function buildChain(params?: GenParams): Candidate[] {
     });
   }
 
-  if (params?.explicitMode) {
-    // NSFW: NVIDIA comes after Cloudflare, just before Ollama
+  if (params?.groqFirst) {
+    // Hazelnut only: NVIDIA comes after Cloudflare, just before Ollama
     chain.push(...nvidiaCandidates);
   }
 
@@ -1097,6 +1122,81 @@ export async function listAvailableProviders(): Promise<string[]> {
   return results.filter((n): n is string => Boolean(n));
 }
 
+// A candidate that answers 200 OK but with a policy refusal ("I'm sorry,
+// but I can't help with that...") isn't a network/timeout failure, so
+// nothing above would have caught it — attemptStream would have happily
+// returned it as a successful reply and chat.ts would have streamed it
+// straight to the user, mid-roleplay, with no failover at all. This is
+// the actual fix for that: the opening of every candidate's reply is
+// held back just long enough to test it against known refusal openers.
+// A match never reaches onToken (so the user never sees it) and is
+// treated as a soft failure so the chain moves on to the next provider,
+// same as an empty completion — not a breaker-tripping event, since the
+// key/slot itself is fine, it's just this model declining this prompt.
+class RefusalError extends Error {
+  constructor(public refusalText: string) {
+    super(`refusal detected: ${refusalText.slice(0, 120)}`);
+    this.name = "RefusalError";
+  }
+}
+
+const REFUSAL_PATTERNS: RegExp[] = [
+  /^i'?m (?:really |so |terribly )?sorry,? (?:but )?i (?:can(?:not|'t)|won'?t|am not able to|am unable to)/i,
+  /^(?:i'?m sorry,? )?i (?:can(?:not|'t)|won'?t|am not able to|am unable to) (?:help|assist|continue|comply|generate|write|create|provide|engage|fulfill|produce)/i,
+  /^i must (?:decline|refuse)/i,
+  /^as an ai(?: language model)?,? i/i,
+  /^i'?m not (?:able|comfortable|going) to/i,
+  /^i don'?t feel comfortable/i,
+  /^(?:sorry,? )?(?:i )?can'?t (?:help|assist|continue|comply) with (?:that|this)/i,
+  /this (?:request|content) (?:violates|goes against|isn'?t something i)/i,
+];
+
+function looksLikeRefusal(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return REFUSAL_PATTERNS.some((re) => re.test(t));
+}
+
+// Enough characters (or a full first sentence) to reliably tell a refusal
+// opener apart from an in-character reply, without adding noticeable
+// latency to a normal response.
+const REFUSAL_CHECK_CHARS = 90;
+
+function wrapWithRefusalGuard(onToken: (chunk: string) => void): {
+  guarded: (chunk: string) => void;
+  isRefusal: () => boolean;
+  flushIfUndecided: () => void;
+} {
+  let buffered = "";
+  let decided = false;
+  let isRefusal = false;
+
+  const guarded = (chunk: string) => {
+    if (isRefusal) return; // swallow the rest — never reaches the client
+    if (decided) {
+      onToken(chunk);
+      return;
+    }
+    buffered += chunk;
+    if (looksLikeRefusal(buffered)) {
+      isRefusal = true;
+      return;
+    }
+    if (buffered.length >= REFUSAL_CHECK_CHARS || /[.!?]/.test(buffered)) {
+      decided = true;
+      onToken(buffered);
+    }
+  };
+
+  return {
+    guarded,
+    isRefusal: () => isRefusal,
+    flushIfUndecided: () => {
+      if (!decided && !isRefusal && buffered) onToken(buffered);
+    },
+  };
+}
+
 /**
  * Runs one candidate's stream attempt. Returns the text on success, or
  * records the right kind of breaker failure and returns null on error.
@@ -1111,8 +1211,13 @@ async function attemptStream(
   params?: GenParams
   ): Promise<{ text: string } | null> {
   const start = Date.now();
+  const guard = wrapWithRefusalGuard(onToken);
   try {
-    const text = await candidate.stream(messages, onToken, clientSignal, params);
+    const text = await candidate.stream(messages, guard.guarded, clientSignal, params);
+    if (guard.isRefusal() || looksLikeRefusal(text)) {
+      throw new RefusalError(text);
+    }
+    guard.flushIfUndecided();
     const latency = Date.now() - start;
     console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms)`);
     candidate.breaker?.reset();
@@ -1120,9 +1225,19 @@ async function attemptStream(
     return { text };
   } catch (err) {
     const latency = Date.now() - start;
-    const wasEmpty = err instanceof EmptyResponseError;
-    const wasRateLimited = !wasEmpty && isRateLimitError(err);
-    const wasTimeout = !wasEmpty && isTimeoutError(err);
+    const wasRefusal = err instanceof RefusalError;
+    const wasEmpty = !wasRefusal && err instanceof EmptyResponseError;
+    const wasRateLimited = !wasRefusal && !wasEmpty && isRateLimitError(err);
+    const wasTimeout = !wasRefusal && !wasEmpty && isTimeoutError(err);
+    if (wasRefusal) {
+      // Same reasoning as the empty-completion case below: the slot itself
+      // answered fine, so don't trip its breaker over a model being
+      // squeamish about one particular prompt — just try the next one.
+      console.warn(`[providers] ${candidate.name} REFUSED — falling back:`, (err as RefusalError).refusalText.slice(0, 200));
+      recordProviderRequest(candidate.name, candidate.slot, false, latency, false, false);
+      errors.push(`${candidate.name}: refused`);
+      return null;
+    }
     if (wasEmpty) {
       // Not a network/timeout failure — the provider answered 200 OK with
       // nothing usable (most often a reasoning model burning its whole
@@ -1219,9 +1334,10 @@ export async function streamChatWithFallback(
 
 export async function summarizeWithFallback(
   previousSummary: string,
-  summaryMessages: ChatMessage[]
+  summaryMessages: ChatMessage[],
+  params?: GenParams
 ): Promise<string> {
-  const chain = buildChain();
+  const chain = buildChain(params);
   for (const candidate of chain) {
     if (candidate.breaker?.isOpen()) continue;
     let start = 0;
@@ -1251,6 +1367,23 @@ export async function summarizeWithFallback(
   return previousSummary;
 }
 
+/** Token ceiling for the summarization call, matching the word limit
+ * buildSummaryPrompt already tells the model to stay under (200/300/400
+ * words by tier). Without this, summarizeWithFallback previously called
+ * buildChain() with no params, so every provider fell back to its own
+ * general-purpose default (1024 tokens on Groq/NVIDIA/SambaNova/Cloudflare)
+ * — several times bigger than a compliant summary needs, with no backstop
+ * if a model ignored the word-count instruction. That matters more than a
+ * single oversized reply would: an inflated memorySummary gets resent in
+ * the system prompt on every future turn for that character, so waste here
+ * compounds instead of being one-off. ~1.6 tokens/word covers normal
+ * English prose plus headroom for the model to actually land the sentence
+ * it's on rather than getting cut mid-thought right at the target length. */
+function maxTokensForSummary(intelligence: number): number {
+  const words = intelligence >= 8.5 ? 400 : intelligence >= 6 ? 300 : 200;
+  return Math.round(words * 1.6);
+}
+
 function buildSummaryPrompt(explicitContext: boolean, intelligence: number): string {
   const matureHint = explicitContext
     ? " Include intimacy, romantic/sexual tension, boundaries, physical/emotional beats relevant to continuity — factually, not graphically."
@@ -1258,7 +1391,7 @@ function buildSummaryPrompt(explicitContext: boolean, intelligence: number): str
 
   const tierGuidance = intelligence >= 8.5
     ? " Go beyond facts: emotional states, relationship dynamics, memorable moments, evolving feelings, recurring themes/references."
-    : intelligence >= 6.5
+    : intelligence >= 6
     ? " Include emotional context: feelings, notable moments, relationship state."
     : " Keep it factual: names, what happened, basic relationship status.";
 
@@ -1267,7 +1400,7 @@ function buildSummaryPrompt(explicitContext: boolean, intelligence: number): str
     "Update the existing summary with the new transcript excerpt." +
     matureHint +
     tierGuidance +
-    ` Keep it under ${intelligence >= 8.5 ? "400" : intelligence >= 6.5 ? "300" : "200"} words. ` +
+    ` Keep it under ${intelligence >= 8.5 ? "400" : intelligence >= 6 ? "300" : "200"} words. ` +
     "Output only the updated summary text."
   );
 }
@@ -1294,7 +1427,7 @@ export async function summarizeConversation(
     },
   ];
 
-  return summarizeWithFallback(previousSummary, summaryMessages);
+  return summarizeWithFallback(previousSummary, summaryMessages, { maxTokens: maxTokensForSummary(intelligence) });
 }
 
 // Re-exported for anything that wants a direct configured-check without
