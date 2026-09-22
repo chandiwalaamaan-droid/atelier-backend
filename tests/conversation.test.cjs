@@ -78,6 +78,9 @@ test('premium adult mode keeps Janitor-like initiative while remaining adult-onl
  assert.match(chocolate,/committed dialogue/i);
  assert.match(chocolate,/non-graphic/i);
  assert.match(chocolate,/no genital detail/i);
+ assert.match(chocolate,/reuse established direct adult vocabulary|plain term instead of replacing it with vague euphemisms/i);
+ assert.match(chocolate,/dialogue as well as narration|including in dialogue/i);
+ assert.doesNotMatch(chocolate,/non-anatomical/i);
 
  const hazelnut=buildSystemPrompt({name:'Mira',personality:'Confident adult, playful',backstory:'A 27-year-old bartender'}, {explicitMode:true,engine:ROLEPLAY_ENGINES.hazelnut,voiceNotes:ROLEPLAY_ENGINES.hazelnut.voiceNotes});
  assert.match(hazelnut,/possessive, commanding, provocative, needy, submissive/i);
@@ -85,4 +88,7 @@ test('premium adult mode keeps Janitor-like initiative while remaining adult-onl
  assert.match(hazelnut,/specific sensual action/i);
  assert.match(hazelnut,/neutral small talk/i);
  assert.match(hazelnut,/leave the user's consent, dialogue, feelings, and actions to them/i);
+ assert.match(hazelnut,/Match direct adult vocabulary|reuse that plain term/i);
+ assert.match(hazelnut,/actually say the relevant word in dialogue|Direct terms may appear in dialogue/i);
+ assert.doesNotMatch(hazelnut,/non-anatomical/i);
 });
