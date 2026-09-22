@@ -3,10 +3,10 @@ import type { GenParams } from "./index";
 
 const BASE_URL = "https://integrate.api.nvidia.com/v1";
 // Current default: minimaxai/minimax-m3 — confirmed working on NVIDIA's
-// Free Endpoint for this account. It leads the standard route used by
-// Vanilla/Strawberry; Chocolate and Hazelnut intentionally prefer their
-// Groq-first quality/supreme routes. Explicit mode itself does not reorder
-// providers — see buildChain in providers/index.ts.
+// Free Endpoint for this account. This is now the model that answers
+// first for every chat request (SFW and NSFW alike), since the chain no
+// longer reorders to Groq-first for explicit chats — see buildChain in
+// providers/index.ts.
 //
 // Everything tried and failed before landing here, so don't re-attempt
 // any of these blind:

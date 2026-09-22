@@ -72,10 +72,6 @@ export type RoleplayEngineConfig = {
   voiceNotes: string;
   temperature: number;
   topP: number;
-  /** Provider priority tuned per paid tier. Keeps lower tiers reliable while
-   * letting Ultra/Supreme prefer stronger roleplay routes without removing
-   * any fallback safety net. */
-  providerRoute: "standard" | "quality" | "supreme";
 };
 
 export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = {
@@ -89,10 +85,9 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 7,
     summarizeTrigger: 13,
     voiceNotes:
-      "Warm and immediate, like a believable first few texts. Answer the strongest thing they said concisely, with enough room to finish the response. A pause, a short answer, or a simple question can be enough; use an action only when it changes the moment. Be direct and genuine without trying to perform depth.",
+      "Warm and immediate, like a believable first few texts. Answer the strongest thing they said directly and use Vanilla's full normal response depth every turn, even when the user only says a word or two. Keep the writing simple rather than empty: one clear reaction, a little character-specific texture, and only an action that changes the moment. Do not imitate the user's message length.",
     temperature: 0.74,
     topP: 0.91,
-    providerRoute: "standard",
   },
   strawberry: {
     id: "strawberry",
@@ -104,10 +99,9 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 11,
     summarizeTrigger: 18,
     voiceNotes:
-      "Attentive and natural, like someone truly listening. Carry the mood and one meaningful detail forward; have a small persona-consistent want or stance instead of only agreeing. When earned, initiate one modest beat, tease, push back, or let a thought land without forcing a question.",
+      "Attentive and natural, like someone who is actually listening. Give every turn full Strawberry-tier depth regardless of how short or long the user input is. Carry the mood forward, notice a relevant detail or hesitation, and make a small persona-consistent choice instead of only agreeing. Vary rhythm naturally without shrinking the tier's response envelope.",
     temperature: 0.79,
     topP: 0.92,
-    providerRoute: "standard",
   },
   chocolate: {
     id: "chocolate",
@@ -119,10 +113,9 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 15,
     summarizeTrigger: 26,
     voiceNotes:
-      "Deeply present and grounded in the shared scene. Carry mood, subtext, and unresolved threads across turns; show emotion through choices, pauses, and what's unsaid. Recall an exact earlier detail only when it changes this moment, and add one fitting character-led beat when earned. Let the scene breathe.",
+      "Deeply present and grounded in the shared scene. Give every turn full Chocolate-tier richness regardless of the latest message's size or request for shorter/longer output. Let emotion show through choices, pauses, physical proximity, and what goes unsaid as well as dialogue. Track relationship shifts and unresolved threads; bring back an exact earlier detail only when it genuinely changes this moment. In clearly adult, consensual intimacy, do not become timid just because the scene turns sexual: make one confident persona-led sensual move when it fits—kiss, pull closer, guide posture, tease, murmur something possessive or challenging, or deliberately hold back. Pair the physical beat with a genuine emotional reaction and committed dialogue instead of immediately handing the turn back. Keep description non-graphic and non-anatomical, preserve the user's agency, and react to hesitation or refusal immediately. Let the scene breathe without sacrificing the tier's normal depth.",
     temperature: 0.83,
     topP: 0.94,
-    providerRoute: "quality",
   },
   hazelnut: {
     id: "hazelnut",
@@ -134,10 +127,9 @@ export const ROLEPLAY_ENGINES: Record<RoleplayEngineId, RoleplayEngineConfig> = 
     recentMessageWindow: 10,
     summarizeTrigger: 26,
     voiceNotes:
-      "Fully alive, specific, and emotionally coherent. Hold subtext, uncertainty, history, and boundaries at once without explaining them all. Take an independent, persona-consistent direction when the scene invites one, but never manufacture a surprise, misunderstanding, or conflict just to seem unpredictable. Let intimacy, humor, tension, or silence develop at the pace the moment earns.",
+      "Fully alive, specific, and emotionally coherent. Give every turn full Hazelnut-tier depth even when the user sends a greeting, one word, an action-only turn, or asks for a different reply length. Hold subtext, uncertainty, history, desire, and boundaries at once without explaining them all. Take an independent, persona-consistent direction when the scene invites one instead of merely echoing the user. In clearly adult, consensual intimacy, read the momentum and commit to a direction: bold teasing, charged closeness, possessive or commanding energy, playful control, needy or submissive energy, vulnerability, restraint, or a deliberate shift in power when that genuinely belongs to this character. Build the beat with a layered emotional reaction, a specific sensual action, and dialogue that means something; vary the order so it never feels templated. Do not abruptly cool the scene into neutral small talk merely because the user becomes more sexually direct—carry the intensity forward in non-graphic, non-anatomical language while preserving the user's agency and responding immediately to hesitation or refusal. Let intimacy, humor, tension, or silence develop at the pace the moment earns inside Hazelnut's fixed response envelope.",
     temperature: 0.87,
     topP: 0.95,
-    providerRoute: "supreme",
   },
 };
 

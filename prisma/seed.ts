@@ -69,9 +69,8 @@ async function main() {
     personality: c.personality,
     backstory: c.backstory,
     greeting: c.greeting,
-    // This imported collection is definitionally the SFW set. Force the flag
-    // here so a stale/generated asset file can never accidentally expose it
-    // as explicit content.
+    // This dataset is definitionally the SFW set, so keep the seed flag
+    // authoritative even if imported asset metadata is ever regenerated.
     isExplicit: false,
     avatarUrl: c.avatarUrl,
     backgroundUrl: c.backgroundUrl,

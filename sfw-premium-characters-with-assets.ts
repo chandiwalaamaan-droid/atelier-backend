@@ -1,4 +1,4 @@
-// Generated SFW character dataset with asset URLs
+// Bundled SFW character seed data with asset URLs.
 // Includes avatarUrl and backgroundUrl for generated images
 
 export interface SfwCharacterWithAssets {

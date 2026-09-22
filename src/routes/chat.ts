@@ -27,7 +27,6 @@ import {
 import { estimateTokens, hazelnutContextEnabled, recallTerms, selectHazelnutContext } from "../lib/hazelnutContext";
 import { withTokenAccounting } from "../lib/providers/tokenStats";
 import { planReply } from "../lib/providers/replyPolicy";
-import { isMatureSceneActive } from "../lib/providers/matureScene";
 import { formatRoleplayInput } from "../lib/roleplayInput";
 import type { GenParams, TtsVoice } from "../lib/providers";
 import { resolveEngineForTier, type MembershipTier } from "../lib/providers/engines";
@@ -258,7 +257,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // content-context signal now: the OG system prompt keeps the content-mode
   // framing fixed, while explicitMode still affects intimate-response context,
   // spice/style fallback fields, and relationship tracking below. It no
-  // longer has any effect on provider chain order — see providerRoute below.
+  // longer has any effect on provider chain order — see groqFirst below.
   const clientExplicitMode = body.explicitMode === true;
   const explicitMode = engine ? engine.explicitMode && clientExplicitMode : clientExplicitMode;
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
@@ -266,15 +265,17 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
   const compactHazelnut = engine?.id === "hazelnut" && hazelnutContextEnabled();
-  // Provider priority is tier-aware but every engine retains the same full
-  // fallback floor. Chocolate prefers Groq before NVIDIA; Hazelnut keeps the
-  // supreme Groq -> SambaNova -> Cloudflare -> NVIDIA order. Vanilla and
-  // Strawberry remain on the reliable NVIDIA-first standard route.
-  const providerRoute = engine?.providerRoute ?? "standard";
+  // Every request — SFW or NSFW/explicit — uses the single default provider
+  // chain (NVIDIA first). The only exception is Hazelnut (supreme tier,
+  // "Ultimate Experience"), which always routes through the Groq-first
+  // chain — Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama —
+  // regardless of the client's explicitMode toggle. See buildChain's
+  // comment in providers/index.ts for the full chain order.
+  const groqFirst = engine?.id === "hazelnut";
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams: GenParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, providerRoute }
-    : { maxTokens, providerRoute };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, groqFirst }
+    : { maxTokens, groqFirst };
   const recentWindow = engine?.id === "hazelnut" && !compactHazelnut ? 20 : engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.id === "hazelnut" && !compactHazelnut ? 36 : engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =
@@ -372,18 +373,6 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // normal path.
   const recentHistory = relevant.length <= summarizeTrigger * 2 ? relevant : relevant.slice(-recentWindow);
 
-  // Mature mode is permission, not proof that the current turn is intimate.
-  // Strawberry, Chocolate, and Hazelnut get tier-sized engagement cues only
-  // while the current/recent exchange actually signals an adult-intimate
-  // scene. Vanilla stays lightweight. The detector is local/regex-based:
-  // no provider call, no DB query, and ordinary turns add zero prompt tokens.
-  const matureSceneEligible = engine?.id === "strawberry" || engine?.id === "chocolate" || engine?.id === "hazelnut";
-  const matureSceneActive = Boolean(matureSceneEligible && isMatureSceneActive({
-    explicitMode,
-    recentHistory,
-    sceneDirective,
-  }));
-
   // Gap between the character's last reply and the user's latest message —
   // what powers buildTimeAwarenessBlock (see its comment in providers/
   // index.ts for why this is worth computing). Pure Date math over rows
@@ -419,23 +408,11 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       : minutesSinceLastMessage < 60 * 24
       ? `h${Math.round(minutesSinceLastMessage / 60)}`
       : `d${Math.round(minutesSinceLastMessage / (60 * 24))}`;
-  const promptRevision = engine?.id === "hazelnut"
-    ? (compactHazelnut ? "compact-v10" : "hazelnut-standard-v7")
-    : engine?.id === "chocolate" ? "chocolate-v3"
-    : engine?.id === "strawberry" ? "strawberry-v3"
-    : "standard-v2";
-  // Only engines whose prompt can gain a mature-scene cue need the state in
-  // the cache key. Prompt revisions above also invalidate the updated pacing
-  // wording without changing any engine's token ceiling.
-  const matureSceneCacheKey = matureSceneEligible
-    ? `:${matureSceneActive ? "mature-scene" : "ordinary-scene"}`
-    : "";
-  const promptCacheKey = `${promptRevision}:${characterId}:${character.name}:${character.personality}:${character.backstory}:${character.roleplayNotes}:${character.tagline}:${character.memorySummary ?? ""}:${character.examples ?? ""}:${engine?.id ?? "none"}:${explicitMode}${matureSceneCacheKey}:${spiceLevel ?? "none"}:${roleplayStyle ?? "none"}:${sceneDirective ?? "none"}:${voiceNotes ?? "none"}:${timeGapBucket}`;
+  const promptCacheKey = `${compactHazelnut ? "compact-v3" : "standard-v2"}:${characterId}:${character.name}:${character.personality}:${character.backstory}:${character.roleplayNotes}:${character.tagline}:${character.memorySummary ?? ""}:${character.examples ?? ""}:${engine?.id ?? "none"}:${explicitMode}:${spiceLevel ?? "none"}:${roleplayStyle ?? "none"}:${sceneDirective ?? "none"}:${voiceNotes ?? "none"}:${timeGapBucket}`;
   let system = getCachedPrompt(promptCacheKey);
   if (!system) {
     system = buildSystemPrompt(character, {
       explicitMode,
-      matureSceneActive,
       spiceLevel,
       roleplayStyle,
       sceneDirective,
@@ -462,6 +439,9 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const replyPlan = planReply(intelligence, latestUserText, sceneDirective);
   genParams.maxTokens = replyPlan.maxTokens;
   genParams.continuationMaxTokens = replyPlan.continuationMaxTokens;
+  genParams.targetWords = replyPlan.targetWords;
+  genParams.minWords = replyPlan.minWords;
+  genParams.maxWords = replyPlan.maxWords;
   chatMessages[0].content += `\n\n${replyPlan.instruction}`;
   if (compactHazelnut) {
     const query = `${latestUserText} ${sceneDirective ?? ""}`;

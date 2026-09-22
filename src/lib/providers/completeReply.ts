@@ -3,7 +3,34 @@ import type { GenParams } from "./index";
 type Message = { role: "system" | "user" | "assistant"; content: string };
 type Stream = (messages: Message[], onToken: (text: string) => void, signal?: AbortSignal, params?: GenParams) => Promise<string>;
 
-/** Same-provider recovery; never retry a normal stop, refusal, or user Stop. */
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Premium/locked tiers should not collapse to a one-liner just because a
+ * provider ignored the prompt. This is intentionally a single bounded
+ * same-provider continuation, not a regeneration: it preserves the reply
+ * already streamed and asks only for the missing depth.
+ */
+function depthContinuationSuffix(previous: string, next: string): string {
+  if (!next.trim()) return "";
+  if (next.startsWith(previous)) return next.slice(previous.length);
+
+  // Strip a repeated tail if the model echoed a little context before
+  // continuing. Requiring a meaningful overlap avoids guessing joins.
+  for (let n = Math.min(previous.length, next.length); n >= 24; n--) {
+    if (previous.endsWith(next.slice(0, n))) return next.slice(n);
+  }
+
+  // Depth continuations are explicitly instructed to begin with NEW text, so
+  // an un-repeated completion can be appended safely with natural spacing.
+  const fresh = next.trimStart();
+  if (!fresh) return "";
+  return `${/\s$/.test(previous) || /^[,.;:!?]/.test(fresh) ? "" : " "}${fresh}`;
+}
+
+/** Same-provider recovery for token cutoffs plus one bounded tier-depth top-up after an abnormally short normal stop. */
 export async function streamCompleteReply(stream: Stream, messages: Message[], onToken: (text: string) => void, signal?: AbortSignal, params?: GenParams) {
   let reason = "unknown";
   const capture = (value: string) => { reason = value; };
@@ -36,6 +63,42 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
       break;
     }
   }
+
+  // A normal provider stop can still be far below the server-owned tier
+  // minimum. Recover that once on the SAME provider so a greeting or tiny
+  // user message cannot collapse Chocolate/Hazelnut (or any other tier) into
+  // a one-liner. Unknown/content-filter/cancelled endings are never extended.
+  const minimumWords = params?.minWords ?? 0;
+  if (reason === "stop" && minimumWords > 0 && countWords(text) < minimumWords && text.trim() && !signal?.aborted) {
+    const targetWords = Math.max(minimumWords, params?.targetWords ?? minimumWords);
+    const currentWords = countWords(text);
+    const missingWords = Math.max(1, targetWords - currentWords);
+    const recovery: Message[] = [
+      ...messages,
+      { role: "assistant", content: text },
+      { role: "system", content: `The assistant reply above stopped too early for this engine's fixed tier envelope. Continue that SAME assistant turn only, adding roughly ${missingWords} words of natural character-specific dialogue, action, atmosphere, or subtext until the COMPLETE reply is near ${targetWords} words. Start directly with new continuation text; do not restart, summarize, repeat the existing opening, take the user's turn, or begin a new scene. Finish naturally.` },
+    ];
+    let extensionReason = "unknown";
+    try {
+      const next = await stream(recovery, () => {}, signal, {
+        ...params,
+        maxTokens: Math.min(512, Math.max(128, params?.continuationMaxTokens ?? 320)),
+        onFinish: value => { extensionReason = value; },
+      });
+      if (!signal?.aborted) {
+        const suffix = depthContinuationSuffix(text, next);
+        if (suffix) {
+          text += suffix;
+          onToken(suffix);
+          reason = extensionReason;
+        }
+      }
+    } catch {
+      // A tier-depth top-up is best-effort. Keep the valid first completion
+      // instead of turning an otherwise successful reply into a provider fail.
+    }
+  }
+
   const finishReason = signal?.aborted ? "cancelled" : reason;
   params?.onFinish?.(finishReason);
   return { text, finishReason, continuations };
