@@ -64,6 +64,18 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
 
   const rawText = await stream(messages, cappedOnToken, signal, { ...params, onFinish: capture });
   let text = maxWords > 0 ? clampReplyToWordCeiling(rawText, maxWords, minWords) : rawText;
+
+  // Never make Strawberry visibly shrink after streaming. Before this guard,
+  // a provider could stream all 70 allowed words, then the sentence-aware
+  // final clamp could choose an earlier 52–60 word sentence boundary and
+  // reply_final would replace the text the user had just watched generate.
+  // Strawberry now has a much smaller native token budget, so this is only a
+  // rare safety net when a provider still overruns the requested envelope.
+  if (params?.preserveStreamedLength && streamCapped && streamedVisible.trim()
+      && countWords(text) < countWords(streamedVisible)) {
+    text = streamedVisible.trimEnd();
+  }
+
   let continuations = 0;
 
   // If the model ignored the prompt and already ran past the tier ceiling,
@@ -84,7 +96,7 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
       // Buffer recovery so an echoed prefix never appears twice on screen.
       const next = await stream(recovery, () => {}, signal, {
         ...params, maxTokens: params?.continuationMaxTokens !== undefined
-          ? Math.min(1024, Math.max(128, params.continuationMaxTokens))
+          ? Math.min(1024, Math.max(64, params.continuationMaxTokens))
           : Math.min(1024, Math.max(512, params?.maxTokens ?? 512)), onFinish: capture,
       });
       if (signal?.aborted) break;

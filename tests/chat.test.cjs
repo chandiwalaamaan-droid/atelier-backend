@@ -120,6 +120,13 @@ test('missing explicitMode inherits the saved account preference, while explicit
  assert.equal(capturedSystemOptions.explicitMode,false);
 });
 
+
+test('Chocolate is locked to the NVIDIA-first fallback chain',async()=>{
+ await (await post({message:'Hello',engineId:'chocolate'})).text();
+ assert.equal(capturedParams.groqFirst,false);
+ assert.equal(capturedParams.maxTokens,224);
+});
+
 test('Hazelnut keeps one fixed tier envelope regardless of message type',async()=>{
  for(const message of ['Hello','What happened at the bookshop?','Write a full scene','Keep it short','*She looks away*']){
   const before=calls;
@@ -166,8 +173,9 @@ test('all engines label narration only for generation, preserving stored input t
   assert.deepEqual(JSON.parse(captured.at(-1).content.slice('ROLEPLAY_INPUT '.length)),[
    {kind:'spoken',text:'hey stupid '},{kind:'narration',text:'she is looking gorgeous'}
   ]);
-  const expected={vanilla:128,strawberry:160,chocolate:224,hazelnut:256}[engineId];
-  assert.equal(capturedParams.maxTokens,expected);assert.equal(capturedParams.continuationMaxTokens,160);
+  const expected={vanilla:128,strawberry:104,chocolate:224,hazelnut:256}[engineId];
+  const continuationExpected=engineId==='strawberry'?104:160;
+  assert.equal(capturedParams.maxTokens,expected);assert.equal(capturedParams.continuationMaxTokens,continuationExpected);
  }
  const userCount=rows.filter(r=>r.role==='user').length;
  await (await post({regenerate:true,engineId:'hazelnut'})).text();

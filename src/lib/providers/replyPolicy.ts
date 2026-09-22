@@ -31,8 +31,12 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 60,
     minWords: 50,
     maxWords: 70,
-    tokens: 160,
-    detailedTokens: 160,
+    // Keep the provider's native generation close to Strawberry's real
+    // 50–70 word envelope instead of letting it write ~100+ words and
+    // relying on reply_final to cut the visible answer back afterward.
+    // A true token-limit finish is recovered on the same provider below.
+    tokens: 104,
+    detailedTokens: 104,
   };
   if (intelligence <= 8.5) return {
     name: "Chocolate",
@@ -111,7 +115,12 @@ export function planReply(intelligence: number, _latestUserText: string, _sceneD
   return {
     mode: "tier" as const,
     maxTokens: p.tokens,
-    continuationMaxTokens: 160,
+    continuationMaxTokens: p.name === "Strawberry" ? 104 : 160,
+    // Strawberry previously streamed up to its hard ceiling and then the
+    // final sentence-aware clamp could roll the UI backward by a sentence.
+    // Preserve what was already shown for this tier if a provider still
+    // overruns the much smaller native token budget.
+    preserveStreamedLength: p.name === "Strawberry",
     targetWords: p.ordinaryWords,
     minWords: p.minWords,
     maxWords: p.maxWords,

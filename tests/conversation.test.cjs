@@ -92,3 +92,15 @@ test('premium adult mode keeps Janitor-like initiative while remaining adult-onl
  assert.match(hazelnut,/actually say the relevant word in dialogue|Direct terms may appear in dialogue/i);
  assert.doesNotMatch(hazelnut,/non-anatomical/i);
 });
+
+test('premium prompts carry emotional state forward instead of looping shyness and reassurance',()=>{
+ for(const id of ['chocolate','hazelnut']){
+  const engine=ROLEPLAY_ENGINES[id];
+  const prompt=buildSystemPrompt({name:'Mira',personality:'Soft-spoken, affectionate, and a little shy',backstory:'An adult friend who has gradually become comfortable around the user'}, {explicitMode:true,engine,voiceNotes:engine.voiceNotes});
+  assert.match(prompt,/Emotional state must move forward|internal emotional phase/i);
+  assert.match(prompt,/do not (?:replay|reset).*first-contact|confidence should not collapse back/i);
+  assert.match(prompt,/shy.*(?:more direct|clearer|self-assured)|reserved.*(?:more direct|clearer|self-assured)/i);
+  assert.match(prompt,/blushing, trembling|stock reaction loops|blush-and-retreat/i);
+  assert.match(prompt,/ask only when a new boundary|do not end every turn by asking/i);
+ }
+});

@@ -279,6 +279,10 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // chain — Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama —
   // regardless of the client's explicitMode toggle. See buildChain's
   // comment in providers/index.ts for the full chain order.
+  // Chocolate is deliberately NVIDIA-first. Hazelnut is the only engine
+  // allowed to opt into the alternate Groq-first chain. Keeping this
+  // assignment explicit prevents future mature-mode/provider tweaks from
+  // accidentally moving Chocolate back to Groq-first.
   const groqFirst = engine?.id === "hazelnut";
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams: GenParams = engine
@@ -447,6 +451,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const replyPlan = planReply(intelligence, latestUserText, sceneDirective);
   genParams.maxTokens = replyPlan.maxTokens;
   genParams.continuationMaxTokens = replyPlan.continuationMaxTokens;
+  genParams.preserveStreamedLength = replyPlan.preserveStreamedLength;
   genParams.targetWords = replyPlan.targetWords;
   genParams.minWords = replyPlan.minWords;
   genParams.maxWords = replyPlan.maxWords;
