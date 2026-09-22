@@ -11,7 +11,7 @@ test('the reported example separates the audible insult from the unspoken assess
   {kind:'spoken',text:'hey stupid '}, {kind:'narration',text:'she is looking gorgeous'}
  ]);
  const plan = planReply(10,'hey stupid *she is looking gorgeous*');
- assert.equal(plan.mode,'tier');assert.equal(plan.maxTokens,768);
+ assert.equal(plan.mode,'tier');assert.equal(plan.maxTokens,256);
 });
 test('actions, thoughts, and quoted speech stay narration for perception-aware interpretation', () => {
  for(const text of ['I hand her a flower','I think "I missed you"','I whisper "I missed you"'])
@@ -40,17 +40,17 @@ test('narration and user length requests cannot change the tier envelope', () =>
  const plans=inputs.map(text=>planReply(10,text));
  for(const plan of plans){
   assert.equal(plan.mode,'tier');
-  assert.equal(plan.maxTokens,768);
+  assert.equal(plan.maxTokens,256);
   assert.equal(plan.targetWords,120);
   assert.equal(plan.minWords,105);
   assert.equal(plan.maxWords,130);
-  assert.equal(plan.continuationMaxTokens,320);
+  assert.equal(plan.continuationMaxTokens,160);
  }
  assert.equal(new Set(plans.map(x=>x.instruction)).size,1);
 });
 test('premium tier guidance keeps Hazelnut at its fixed depth and length', () => {
  const normal=planReply(10,'What happened?'), detailed=planReply(10,'Write a full scene');
- assert.equal(normal.maxTokens,768);assert.equal(detailed.maxTokens,768);
+ assert.equal(normal.maxTokens,256);assert.equal(detailed.maxTokens,256);
  assert.match(normal.instruction,/around 120 words/);assert.match(detailed.instruction,/105–130 words/);
  assert.equal(normal.instruction,detailed.instruction);
 });
@@ -70,7 +70,7 @@ test('all engines and rollback retain perception rules with exactly one per-turn
 test('short greetings and scene-rich turns keep the same Hazelnut tier mode', () => {
  for(const text of ['Hi','hey, come here','hello again, sit with me','Write a full scene','Keep it short']){
   const plan=planReply(10,text);
-  assert.equal(plan.mode,'tier');assert.equal(plan.maxTokens,768);assert.equal(plan.targetWords,120);
+  assert.equal(plan.mode,'tier');assert.equal(plan.maxTokens,256);assert.equal(plan.targetWords,120);
  }
 });
 

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { streamCompleteReply } = require('../dist/lib/providers/completeReply');
-const { planReply, replyProfile } = require('../dist/lib/providers/replyPolicy');
+const { planReply, replyProfile, clampReplyToWordCeiling } = require('../dist/lib/providers/replyPolicy');
 const { cleanAssistantResponse, streamChatWithFallback } = require('../dist/lib/providers');
 const { streamOpenAICompatibleChat } = require('../dist/lib/providers/openaiCompatible');
 const { streamOllamaChat } = require('../dist/lib/providers/ollama');
@@ -96,7 +96,7 @@ test('real provider chain forwards recovery params and uses the same provider fo
 test('cutoff recovery preserves the selected tier budget while finishing an interrupted word',async()=>{
  const s=scripted([{text:'That is your greet',reason:'length'},{text:'That is your greeting?',reason:'stop'}]);
  const r=await streamCompleteReply(s.stream,messages,()=>{},undefined,planReply(10,'Hi'));
- assert.equal(s.inputs[0].params.maxTokens,768);assert.equal(s.inputs[1].params.maxTokens,320);
+ assert.equal(s.inputs[0].params.maxTokens,256);assert.equal(s.inputs[1].params.maxTokens,160);
  assert.equal(r.text,'That is your greeting?');assert.equal(r.finishReason,'stop');
 });
 
@@ -110,7 +110,7 @@ test('tier-locked replies get one same-provider depth top-up when a normal stop 
  assert.equal(r.finishReason,'stop');
  assert.equal(r.text,initial+added);
  assert.equal(visible,r.text);
- assert.equal(s.inputs[1].params.maxTokens,320);
+ assert.equal(s.inputs[1].params.maxTokens,160);
  assert.match(s.inputs[1].messages.at(-1).content,/fixed tier envelope/i);
  assert.match(s.inputs[1].messages.at(-1).content,/same assistant turn/i);
 });
@@ -157,4 +157,21 @@ test('a provider failure after visible output preserves the partial reply instea
  });
  let visible='';const r=await streamChatWithFallback(messages,x=>visible+=x);
  assert.equal(calls,1);assert.equal(r.text,'*She catches your wrist and looks up.* Wait.');assert.equal(visible,r.text);assert.equal(r.finishReason,'provider_error');
+});
+
+
+test('server-side word ceiling keeps an overlong Hazelnut reply at or below 130 words',()=>{
+ const long=Array.from({length:18},(_,i)=>`Sentence ${i+1} adds a distinct reaction and moves the scene forward without repeating the previous emotional beat.`).join(' ');
+ const capped=clampReplyToWordCeiling(long,130,105);
+ const words=capped.trim().split(/\s+/).filter(Boolean).length;
+ assert.ok(words>=105);assert.ok(words<=130);assert.match(capped,/[.!?][\"'”’)*_\]]*$/);
+});
+
+test('depth top-up cannot overshoot the tier maximum even when the provider ignores the requested addition',async()=>{
+ const initial=Array.from({length:90},(_,i)=>`w${i+1}`).join(' ')+' ';
+ const huge=Array.from({length:100},(_,i)=>`extra${i+1}`).join(' ')+'.';
+ const s=scripted([{text:initial,reason:'stop'},{text:huge,reason:'stop'}]);let visible='';
+ const r=await streamCompleteReply(s.stream,messages,t=>visible+=t,undefined,planReply(10,'Hi'));
+ const words=r.text.trim().split(/\s+/).filter(Boolean).length;
+ assert.equal(s.calls,2);assert.ok(words<=130);assert.equal(visible,r.text);assert.ok(s.inputs[1].params.maxTokens<160);
 });

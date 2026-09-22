@@ -116,8 +116,8 @@ test('Hazelnut keeps one fixed tier envelope regardless of message type',async()
   const before=calls;
   await (await post({message,engineId:'hazelnut'})).text();
   assert.equal(calls,before+1);assert.equal(summaryCalls,0);
-  assert.equal(capturedParams.maxTokens,768);
-  assert.equal(capturedParams.continuationMaxTokens,320);
+  assert.equal(capturedParams.maxTokens,256);
+  assert.equal(capturedParams.continuationMaxTokens,160);
   assert.equal(capturedParams.targetWords,120);
   assert.equal(capturedParams.minWords,105);
   assert.equal(capturedParams.maxWords,130);
@@ -157,8 +157,8 @@ test('all engines label narration only for generation, preserving stored input t
   assert.deepEqual(JSON.parse(captured.at(-1).content.slice('ROLEPLAY_INPUT '.length)),[
    {kind:'spoken',text:'hey stupid '},{kind:'narration',text:'she is looking gorgeous'}
   ]);
-  const expected={vanilla:256,strawberry:512,chocolate:640,hazelnut:768}[engineId];
-  assert.equal(capturedParams.maxTokens,expected);assert.equal(capturedParams.continuationMaxTokens,320);
+  const expected={vanilla:128,strawberry:160,chocolate:224,hazelnut:256}[engineId];
+  assert.equal(capturedParams.maxTokens,expected);assert.equal(capturedParams.continuationMaxTokens,160);
  }
  const userCount=rows.filter(r=>r.role==='user').length;
  await (await post({regenerate:true,engineId:'hazelnut'})).text();

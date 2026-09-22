@@ -1,4 +1,5 @@
 import type { GenParams } from "./index";
+import { clampReplyToWordCeiling } from "./replyPolicy";
 
 type Message = { role: "system" | "user" | "assistant"; content: string };
 type Stream = (messages: Message[], onToken: (text: string) => void, signal?: AbortSignal, params?: GenParams) => Promise<string>;
@@ -34,9 +35,43 @@ function depthContinuationSuffix(previous: string, next: string): string {
 export async function streamCompleteReply(stream: Stream, messages: Message[], onToken: (text: string) => void, signal?: AbortSignal, params?: GenParams) {
   let reason = "unknown";
   const capture = (value: string) => { reason = value; };
-  let text = await stream(messages, onToken, signal, { ...params, onFinish: capture });
+  const maxWords = params?.maxWords ?? 0;
+  const minWords = params?.minWords ?? 0;
+
+  // Do not let a verbose provider stream hundreds of words to the UI before
+  // reply_final reconciles it. The final saved text is sentence-clamped below;
+  // this streaming guard is a hard first-N-words ceiling so the live reply
+  // never visibly runs far beyond its tier.
+  let streamedVisible = "";
+  let streamCapped = false;
+  const cappedOnToken = maxWords > 0 ? (chunk: string) => {
+    if (streamCapped || !chunk) return;
+    const candidate = streamedVisible + chunk;
+    const words = [...candidate.matchAll(/\S+/g)];
+    if (words.length <= maxWords) {
+      streamedVisible = candidate;
+      onToken(chunk);
+      return;
+    }
+    const last = words[maxWords - 1];
+    const end = (last.index ?? 0) + last[0].length;
+    const hardCapped = candidate.slice(0, end);
+    const addition = hardCapped.slice(streamedVisible.length);
+    if (addition) onToken(addition);
+    streamedVisible = hardCapped;
+    streamCapped = true;
+  } : onToken;
+
+  const rawText = await stream(messages, cappedOnToken, signal, { ...params, onFinish: capture });
+  let text = maxWords > 0 ? clampReplyToWordCeiling(rawText, maxWords, minWords) : rawText;
   let continuations = 0;
-  while (reason === "length" && text.trim() && !signal?.aborted && continuations < 2) {
+
+  // If the model ignored the prompt and already ran past the tier ceiling,
+  // the saved/final reply is capped locally. Do not ask for an additional
+  // continuation merely because the provider itself stopped on max_tokens.
+  if (maxWords > 0 && countWords(rawText) > maxWords) reason = "stop";
+
+  while (reason === "length" && text.trim() && !signal?.aborted && continuations < 2 && (!maxWords || countWords(text) < maxWords)) {
     continuations++;
     const anchor = text.slice(-160);
     const recovery: Message[] = [
@@ -55,8 +90,12 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
       if (signal?.aborted) break;
       const suffix = continuationSuffix(text, next, anchor);
       if (!suffix) { reason = "length"; break; }
-      text += suffix;
-      onToken(suffix);
+      const combined = maxWords > 0 ? clampReplyToWordCeiling(text + suffix, maxWords, minWords) : text + suffix;
+      const accepted = combined.startsWith(text) ? combined.slice(text.length) : "";
+      if (!accepted) { reason = maxWords > 0 && countWords(text) >= maxWords ? "stop" : "length"; break; }
+      text = combined;
+      onToken(accepted);
+      if (maxWords > 0 && countWords(text) >= maxWords) reason = "stop";
     } catch {
       // Keep already-visible content; do not replace it with another provider.
       reason = "length";
@@ -82,15 +121,27 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
     try {
       const next = await stream(recovery, () => {}, signal, {
         ...params,
-        maxTokens: Math.min(512, Math.max(128, params?.continuationMaxTokens ?? 320)),
+        // Scale the top-up budget to the amount actually missing. The old
+        // fixed 320-token allowance could turn a 30-word top-up into another
+        // full paragraph and push a 120-word tier close to 200 words.
+        maxTokens: Math.min(
+          params?.continuationMaxTokens ?? 160,
+          Math.max(64, Math.ceil(missingWords * 1.8 + 24))
+        ),
         onFinish: value => { extensionReason = value; },
       });
       if (!signal?.aborted) {
         const suffix = depthContinuationSuffix(text, next);
         if (suffix) {
-          text += suffix;
-          onToken(suffix);
-          reason = extensionReason;
+          const combined = maxWords > 0 ? clampReplyToWordCeiling(text + suffix, maxWords, minimumWords) : text + suffix;
+          const accepted = combined.startsWith(text) ? combined.slice(text.length) : "";
+          if (accepted) {
+            text = combined;
+            onToken(accepted);
+            reason = (maxWords > 0 && countWords(text) >= maxWords) || countWords(text) >= minimumWords
+              ? "stop"
+              : extensionReason;
+          }
         }
       }
     } catch {

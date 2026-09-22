@@ -18,7 +18,7 @@ import { ProviderBreaker, isRateLimitError, isTimeoutError } from "./circuitBrea
 import { EmptyResponseError } from "./openaiCompatible";
 import { getEngineConfig, type RoleplayEngineConfig } from "./engines";
 import crypto from "crypto";
-import { buildReplyGuidance, replyProfile } from "./replyPolicy";
+import { buildReplyGuidance, replyProfile, clampReplyToWordCeiling } from "./replyPolicy";
 import { streamCompleteReply } from "./completeReply";
 import { hazelnutContextEnabled } from "../hazelnutContext";
 import { formatRoleplayInput, ROLEPLAY_INPUT_RULES, ROLEPLAY_MEMORY_RULES } from "../roleplayInput";
@@ -192,6 +192,12 @@ export function cleanAssistantResponse(text: string, intelligence = 5): string {
   cleaned = stripLeakedMeta(cleaned);
 
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+
+  // Prompts are advisory. Enforce the selected tier's maximum on the
+  // authoritative saved/final reply so provider verbosity can never turn a
+  // Hazelnut 105–130 word envelope into a 170–200 word response.
+  const profile = replyProfile(intelligence);
+  cleaned = clampReplyToWordCeiling(cleaned, profile.maxWords, profile.minWords);
 
   return cleaned;
 }

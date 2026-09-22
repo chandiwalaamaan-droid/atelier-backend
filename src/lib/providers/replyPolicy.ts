@@ -13,8 +13,8 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 35,
     minWords: 25,
     maxWords: 45,
-    tokens: 256,
-    detailedTokens: 256,
+    tokens: 128,
+    detailedTokens: 128,
   };
   if (intelligence <= 5) return {
     name: "Balanced",
@@ -22,8 +22,8 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 50,
     minWords: 40,
     maxWords: 60,
-    tokens: 384,
-    detailedTokens: 384,
+    tokens: 144,
+    detailedTokens: 144,
   };
   if (intelligence <= 7) return {
     name: "Strawberry",
@@ -31,8 +31,8 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 60,
     minWords: 50,
     maxWords: 70,
-    tokens: 512,
-    detailedTokens: 512,
+    tokens: 160,
+    detailedTokens: 160,
   };
   if (intelligence <= 8.5) return {
     name: "Chocolate",
@@ -40,8 +40,8 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 100,
     minWords: 85,
     maxWords: 110,
-    tokens: 640,
-    detailedTokens: 640,
+    tokens: 224,
+    detailedTokens: 224,
   };
   return {
     name: "Hazelnut",
@@ -49,14 +49,56 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 120,
     minWords: 105,
     maxWords: 130,
-    tokens: 768,
-    detailedTokens: 768,
+    tokens: 256,
+    detailedTokens: 256,
   };
+}
+
+
+/**
+ * Hard server-side ceiling for a tier reply. Prompts are advisory; hosted
+ * models can and do ignore requested word counts. Prefer the last complete
+ * sentence near the ceiling so the saved/final reply stays coherent instead
+ * of chopping a sentence at an arbitrary word.
+ */
+export function clampReplyToWordCeiling(text: string, maxWords: number, minWords = 0): string {
+  const clean = text.trim();
+  if (!clean || maxWords <= 0) return clean;
+
+  const words = [...clean.matchAll(/\S+/g)];
+  // Preserve the provider text byte-for-byte when it is already inside the
+  // ceiling. This matters while streaming: trimming harmless trailing space
+  // here can make a later continuation emit an extra separator.
+  if (words.length <= maxWords) return text;
+
+  const hard = words[maxWords - 1];
+  const hardEnd = (hard.index ?? 0) + hard[0].length;
+  const prefix = clean.slice(0, hardEnd);
+
+  // Avoid collapsing a premium reply too far below its own minimum merely
+  // because an early sentence happens to end well before the tier ceiling.
+  const floorWord = Math.min(maxWords - 1, Math.max(0, Math.min(minWords, maxWords) - 1));
+  const floor = words[floorWord];
+  const floorEnd = floor ? (floor.index ?? 0) + floor[0].length : Math.floor(hardEnd * 0.7);
+
+  let boundary = -1;
+  const sentenceEnd = /[.!?](?:[\"'”’)*_\]]*)?(?=\s|$)/g;
+  for (const match of prefix.matchAll(sentenceEnd)) {
+    const end = (match.index ?? 0) + match[0].length;
+    if (end >= floorEnd) boundary = end;
+  }
+  if (boundary > 0) return prefix.slice(0, boundary).trim();
+
+  // Last resort: stay inside the hard ceiling. This path is mainly for one
+  // extremely long unpunctuated sentence; terminate it cleanly rather than
+  // returning an ellipsis that looks like a provider cutoff.
+  const clipped = prefix.replace(/[\s,;:—-]+$/g, '').trim();
+  return /[.!?](?:[\"'”’)*_\]]*)?$/.test(clipped) ? clipped : clipped + '.';
 }
 
 export function buildReplyGuidance(intelligence: number): string {
   const p = replyProfile(intelligence);
-  return `TIER-LOCKED REPLY ENVELOPE — ${p.name}: ${p.purpose}. Every normal reply from this engine should land around ${p.ordinaryWords} words, normally ${p.minWords}–${p.maxWords} words. This length and quality level belong to the selected engine and stay stable regardless of whether the latest user message is one word, very long, action-only, casual, emotional, explicit, or asks for a shorter/longer answer. Adapt the CONTENT and emotional intensity to the turn, not the tier's response depth. Complete a coherent character beat within this envelope: respond to the actual point, add the amount of dialogue/action/subtext appropriate to ${p.name}, and finish naturally without filler. Do not imitate the length of earlier replies or another engine.`;
+  return `TIER-LOCKED REPLY ENVELOPE — ${p.name}: ${p.purpose}. Every normal reply from this engine should land around ${p.ordinaryWords} words, normally ${p.minWords}–${p.maxWords} words. This length and quality level belong to the selected engine and stay stable regardless of whether the latest user message is one word, very long, action-only, casual, emotional, explicit, or asks for a shorter/longer answer. Adapt the CONTENT and emotional intensity to the turn, not the tier's response depth. Complete a coherent character beat within this envelope: respond to the actual point, add the amount of dialogue/action/subtext appropriate to ${p.name}, and finish naturally without filler. Every sentence should add something new; do not restate the same emotion, gaze, blush, heartbeat, hesitation, posture, or invitation merely to fill the word target. Prefer one specific reaction plus meaningful dialogue/scene movement over several paraphrases of the same beat. Do not imitate the length of earlier replies or another engine.`;
 }
 
 /**
@@ -69,7 +111,7 @@ export function planReply(intelligence: number, _latestUserText: string, _sceneD
   return {
     mode: "tier" as const,
     maxTokens: p.tokens,
-    continuationMaxTokens: 320,
+    continuationMaxTokens: 160,
     targetWords: p.ordinaryWords,
     minWords: p.minWords,
     maxWords: p.maxWords,
