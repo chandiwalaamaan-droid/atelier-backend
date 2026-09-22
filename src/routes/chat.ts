@@ -420,12 +420,13 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
       ? `h${Math.round(minutesSinceLastMessage / 60)}`
       : `d${Math.round(minutesSinceLastMessage / (60 * 24))}`;
   const promptRevision = engine?.id === "hazelnut"
-    ? (compactHazelnut ? "compact-v10" : "hazelnut-standard-v6")
-    : engine?.id === "chocolate" ? "chocolate-v2"
-    : engine?.id === "strawberry" ? "strawberry-v2"
-    : "standard";
+    ? (compactHazelnut ? "compact-v10" : "hazelnut-standard-v7")
+    : engine?.id === "chocolate" ? "chocolate-v3"
+    : engine?.id === "strawberry" ? "strawberry-v3"
+    : "standard-v2";
   // Only engines whose prompt can gain a mature-scene cue need the state in
-  // the cache key. Vanilla remains cache-compatible with the old standard path.
+  // the cache key. Prompt revisions above also invalidate the updated pacing
+  // wording without changing any engine's token ceiling.
   const matureSceneCacheKey = matureSceneEligible
     ? `:${matureSceneActive ? "mature-scene" : "ordinary-scene"}`
     : "";

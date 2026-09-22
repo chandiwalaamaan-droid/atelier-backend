@@ -41,6 +41,12 @@ const STRONG_EROTIC_ACTION = /\b(?:(?:fondl(?:e|es|ed|ing)|grop(?:e|es|ed|ing))\
 // "hard for you", and "wet for you" so normal sentences like "I turned
 // on the light" or "this is hard for you" stay ordinary.
 const AROUSAL = /\b(?:horny|aroused|erect(?:ion)?|(?:i(?:'m| am)|you(?:'re| are)|he(?:'s| is)|she(?:'s| is)|they(?:'re| are))\s+(?:really\s+|so\s+)?turned\s+on(?:\s+(?:by|for)\b|(?=[.!?,]|$))|(?:i(?:'m| am)|you(?:'re| are)|he(?:'s| is)|she(?:'s| is)|they(?:'re| are))\s+(?:really\s+|so\s+)?(?:wet|hard)\s+for\s+(?:you|me|him|her|them))\b/i;
+// Possessive anatomy often carries the arousal state through a later pronoun
+// ("my cock ... it's hard"), which the subject-based AROUSAL pattern above
+// intentionally does not match. Keep this proximity-based and suppress clear
+// medical framing so ordinary health discussion does not activate the scene.
+const ANATOMY_AROUSAL = /\b(?:(?:my|your|his|her|their)\s+(?:cock|dick|penis)\b(?:(?![.!?]).){0,56}\b(?:hard|erect)(?:\s+(?:for\s+(?:you|me|him|her|them)|right\s+now|this\s+morning|tonight|already|again))?(?=[.!?,]|$)|(?:my|your|his|her|their)\s+(?:pussy|vagina|clit(?:oris)?)\b(?:(?![.!?]).){0,56}\bwet(?:\s+(?:for\s+(?:you|me|him|her|them)|right\s+now|already|again))?(?=[.!?,]|$))/i;
+const MEDICAL_AROUSAL_CONTEXT = /\b(?:doctor|medical|hospital|clinic|exam|condition|pain|injury|surgery|cancer|health|priapism|treatment|symptom)\b/i;
 const AROUSAL_SOUND = /\b(?:moan(?:s|ed|ing)?|whimper(?:s|ed|ing)?)\b/i;
 
 // These are intimate enough to establish the scene by themselves even when
@@ -133,6 +139,7 @@ export function matureSceneScore(text: string): number {
   if (UNDRESSING.test(t)) score += 3;
   if (STRONG_EROTIC_ACTION.test(t)) score += 3;
   if (AROUSAL.test(t)) score += 3;
+  if (!MEDICAL_AROUSAL_CONTEXT.test(t) && ANATOMY_AROUSAL.test(t)) score += 3;
   if (STRONG_INTIMATE_ACTION.test(t)) score += 3;
   if (AROUSAL_SOUND.test(t)) score += 1;
   if (INTIMATE_ACTION.test(t)) score += 1;

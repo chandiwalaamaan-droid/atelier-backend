@@ -304,7 +304,7 @@ function buildEngineBehaviorBlock(intelligence: number, _spiceLevel: string, rol
       : intelligence <= 9.5
       ? "Real people don't always say what they mean first try. Leave room for ambiguity or a natural self-correction when the moment supports it; don't manufacture misunderstanding or conflict."
       : "Occasionally surprising but coherent. Let reactions take an unexpected turn when the context earns it, while staying consistent with the character and scene. Don't manufacture novelty or conflict just to seem unpredictable.";
-  return `Delivery preference: ${style} when the scene calls for it. ${depth} The scene and persona set the emotional intensity; an ordinary conversation stays ordinary. Higher tiers allow more nuance, not mandatory drama, intimacy, or extra words.`;
+  return `Delivery preference: ${style} when the scene calls for it. ${depth} The scene and persona set the emotional intensity; an ordinary conversation stays ordinary. Higher tiers add fuller, more nuanced beats when the turn gives them material, without manufacturing drama or intimacy.`;
 }
 
 /** Real-world inactivity does not imply elapsed time inside the fictional scene. */
