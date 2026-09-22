@@ -7,14 +7,14 @@ function mock(file, exports) {
   const filename = require.resolve(path.join(__dirname, '..', 'dist', file));
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
 }
-let rows = [], calls = 0, fail = false, failSave = false, release = null, block = false, captured, capturedParams, replyText = "A quiet room.", finishReason = "stop", summaryCalls=0, summaryFail=false, summaryBlock=false, summaryRelease=null, summaryInputs=null, archiveQueries=[], archiveFail=false;
+let rows = [], calls = 0, fail = false, failSave = false, release = null, block = false, captured, capturedParams, capturedSystemOptions, userExplicitMode=false, replyText = "A quiet room.", finishReason = "stop", summaryCalls=0, summaryFail=false, summaryBlock=false, summaryRelease=null, summaryInputs=null, archiveQueries=[], archiveFail=false;
 const character = { id:'char-a', ownerId:'user-a', name:'The guide', personality:'Curious', backstory:'', greeting:'Hello.', roleplayNotes:'', tagline:'A traveler', memorySummary:'', summarizedThrough:0, examples:'[]', explicitEverUsed:false };
 const matches = (r,w={}) => Object.entries(w).every(([k,v]) => k === 'OR' ? v.some(x=>matches(r,x)) : k === 'content' && v && typeof v === 'object' ? r.content.toLowerCase().includes(v.contains.toLowerCase()) : k === 'createdAt' ? (!v.gt || r.createdAt > v.gt) && (!v.lt || r.createdAt < v.lt) : r[k] === v);
 const ordered = (w, order) => rows.filter(r=>matches(r,w)).sort((a,b)=>(a.createdAt-b.createdAt)*(JSON.stringify(order).includes('desc')?-1:1));
 const create = data => { const row={id:'generated-'+(rows.length+1),createdAt:new Date(Date.now()+rows.length),...data};rows.push(row);return row; };
 const prisma = {
  character: { findUnique: async ({where}) => where.id === character.id ? {...character} : null, update: async ({data}) => Object.assign(character,data), updateMany:async({where,data})=>{if(!matches(character,where))return {count:0};Object.assign(character,data);return {count:1}} },
- user: {findUnique:async()=>({membershipTier:'free'})},
+ user: {findUnique:async()=>({membershipTier:'free',explicitMode:userExplicitMode})},
  message: {
    findUnique:async ({where})=>rows.find(r=>r.id===where.id)||null,
    findFirst:async ({where,orderBy})=>ordered(where,orderBy)[0]||null,
@@ -32,7 +32,7 @@ mock('lib/rateLimit.js',{checkRateLimit:()=>({limited:false})});
 
 mock('lib/providers/index.js',{
  summarizeConversation:async(...args)=>{summaryCalls++;summaryInputs=args;if(summaryBlock)await new Promise(r=>summaryRelease=r);if(summaryFail)throw Error('summary unavailable');return 'Facts: The brass compass is in the blue drawer.\nBoundaries: No horror.';},
- buildSystemPrompt:()=> 'Character instructions.', RECENT_MESSAGE_WINDOW:20, SUMMARIZE_TRIGGER:1000,
+ buildSystemPrompt:(_character,options)=>{capturedSystemOptions=options;return 'Character instructions.';}, RECENT_MESSAGE_WINDOW:20, SUMMARIZE_TRIGGER:1000,
  parseSpiceLevel:()=>undefined,parseRoleplayStyle:()=>undefined, maxTokensForIntelligence:()=>500,
  withPersonaAnchor:()=>{}, cleanAssistantResponse:x=>x,
  streamChatWithFallback:async (messages,onChunk,onFailover,signal,params)=>{calls++;captured=messages;capturedParams=params;if(block) await new Promise(r=>release=r);if(fail) throw Error('provider unavailable');onChunk(replyText);return {text:replyText,provider:'test',finishReason};}
@@ -42,7 +42,7 @@ const app=express();app.use(express.json());app.use('/api/chat',router);
 let server,base;
 test.before(async()=>{await new Promise(r=>{server=app.listen(0,'127.0.0.1',r)});base=`http://127.0.0.1:${server.address().port}/api/chat/char-a`});
 test.after(()=>new Promise(r=>server.close(r)));
-test.beforeEach(()=>{rows=[];calls=0;fail=false;failSave=false;block=false;release=null;replyText="A quiet room.";finishReason="stop";summaryCalls=0;summaryFail=false;summaryBlock=false;summaryRelease=null;summaryInputs=null;archiveQueries=[];archiveFail=false;character.summarizedThrough=0;character.memorySummary="";});
+test.beforeEach(()=>{rows=[];calls=0;fail=false;failSave=false;block=false;release=null;capturedSystemOptions=undefined;userExplicitMode=false;replyText="A quiet room.";finishReason="stop";summaryCalls=0;summaryFail=false;summaryBlock=false;summaryRelease=null;summaryInputs=null;archiveQueries=[];archiveFail=false;character.summarizedThrough=0;character.memorySummary="";character.explicitEverUsed=false;});
 const post = (body,headers={}) => fetch(base,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
 const turn={message:'Hello',requestId:'12345678-abcd-1234-abcd-123456789000'};
 test('completed retries replay without another generation or duplicate rows',async()=>{
@@ -111,6 +111,15 @@ test('optional archive failures preserve the latest exchange and do not fail the
  seedHistory(14);character.summarizedThrough=2;archiveFail=true;
  const wire=await (await post({message:'Where is the compass?',engineId:'hazelnut'})).text();assert.match(wire,/reply_final/);assert.equal(captured.at(-1).content,'Where is the compass?');assert.equal(calls,1);
 });
+
+test('missing explicitMode inherits the saved account preference, while explicit false overrides it',async()=>{
+ userExplicitMode=true;
+ await (await post({message:'Hello',engineId:'hazelnut'})).text();
+ assert.equal(capturedSystemOptions.explicitMode,true);
+ await (await post({message:'Hello again',engineId:'hazelnut',explicitMode:false})).text();
+ assert.equal(capturedSystemOptions.explicitMode,false);
+});
+
 test('Hazelnut keeps one fixed tier envelope regardless of message type',async()=>{
  for(const message of ['Hello','What happened at the bookshop?','Write a full scene','Keep it short','*She looks away*']){
   const before=calls;

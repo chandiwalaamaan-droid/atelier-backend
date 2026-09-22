@@ -210,7 +210,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
 
   const [character, requestingUser] = await Promise.all([
     prisma.character.findUnique({ where: { id: characterId } }),
-    prisma.user.findUnique({ where: { id: userId }, select: { membershipTier: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { membershipTier: true, explicitMode: true } }),
   ]);
   if (!character || character.ownerId !== userId) {
     return res.status(404).json({ error: "Character not found." });
@@ -258,8 +258,16 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // framing fixed, while explicitMode still affects intimate-response context,
   // spice/style fallback fields, and relationship tracking below. It no
   // longer has any effect on provider chain order — see groqFirst below.
-  const clientExplicitMode = body.explicitMode === true;
-  const explicitMode = engine ? engine.explicitMode && clientExplicitMode : clientExplicitMode;
+  // Prefer the per-request toggle when the frontend sends it, but do not
+  // silently disable mature mode when an older/stale client omits the field.
+  // In that case, fall back to the user's persisted account preference. An
+  // explicit `false` still wins, so the client can always turn mature mode
+  // off for a particular chat.
+  const clientExplicitMode = typeof body.explicitMode === "boolean" ? body.explicitMode : undefined;
+  const requestedExplicitMode = clientExplicitMode ?? (requestingUser?.explicitMode === true);
+  const explicitMode = engine ? engine.explicitMode && requestedExplicitMode : requestedExplicitMode;
+  const explicitModeSource = clientExplicitMode === undefined ? "account-default" : "request";
+  console.log(`[chat] engine=${engine?.id ?? "manual"} explicitMode=${explicitMode} source=${explicitModeSource}`);
   const spiceLevel = engine ? engine.spiceLevel : explicitMode ? parseSpiceLevel(body.spiceLevel) : undefined;
   const roleplayStyle = engine ? engine.roleplayStyle : explicitMode ? parseRoleplayStyle(body.roleplayStyle) : undefined;
   const voiceNotes = engine?.voiceNotes;
