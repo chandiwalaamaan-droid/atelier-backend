@@ -103,17 +103,25 @@ test('Ollama adapter preserves done_reason even without final newline',async(t)=
  t.mock.method(global,'fetch',async()=>new Response(JSON.stringify({message:{content:'A thought'},done:false})+'\n'+JSON.stringify({done:true,done_reason:'length'})));
  let reason;assert.equal(await streamOllamaChat(messages,()=>{},1000,undefined,{onFinish:r=>reason=r}),'A thought');assert.equal(reason,'length');
 });
-test('real provider chain forwards recovery params and uses the same provider for both routes',async(t)=>{
+test('real provider chain is NVIDIA-first and keeps recovery on the same provider',async(t)=>{
  const old={...process.env};process.env.NVIDIA_API_KEY='test-only';process.env.GROQ_API_KEY='test-only';
  t.after(()=>{for(const key of Object.keys(process.env))if(!(key in old))delete process.env[key];Object.assign(process.env,old)});
- for(const groqFirst of [false,true]){
-  const requests=[];
-  const mock=t.mock.method(global,'fetch',async(url,options)=>{requests.push({url,body:JSON.parse(options.body)});return requests.length===1?sse('I found the bo','length'):sse('I found the book.','stop')});
-  let visible='';const r=await streamChatWithFallback(messages,x=>visible+=x,undefined,undefined,{groqFirst,maxTokens:1536});
-  assert.equal(requests.length,2);assert.equal(requests[0].url,requests[1].url);assert.match(requests[0].url,groqFirst?/groq/:/nvidia/);
-  assert.equal(requests[0].body.max_tokens,1536);assert.equal(requests[1].body.max_tokens,1024);assert.equal(r.text,'I found the book.');assert.equal(visible,r.text);assert.equal(r.finishReason,'stop');
-  mock.mock.restore();
- }
+ const requests=[];
+ const mock=t.mock.method(global,'fetch',async(url,options)=>{requests.push({url,body:JSON.parse(options.body)});return requests.length===1?sse('I found the bo','length'):sse('I found the book.','stop')});
+ let visible='';const r=await streamChatWithFallback(messages,x=>visible+=x,undefined,undefined,{maxTokens:1536});
+ assert.equal(requests.length,2);assert.equal(requests[0].url,requests[1].url);assert.match(requests[0].url,/nvidia/);
+ assert.equal(requests[0].body.max_tokens,1536);assert.equal(requests[1].body.max_tokens,1024);assert.equal(r.text,'I found the book.');assert.equal(visible,r.text);assert.equal(r.finishReason,'stop');
+ mock.mock.restore();
+});
+
+test('cross-provider failover goes from NVIDIA directly to Groq',async(t)=>{
+ const old={...process.env};process.env.NVIDIA_API_KEY='test-only';process.env.GROQ_API_KEY='test-only';delete process.env.SAMBANOVA_API_KEY;delete process.env.SAMBANOVA_API_KEY_2;delete process.env.CLOUDFLARE_CHAT_ACCOUNT_ID;delete process.env.CLOUDFLARE_CHAT_API_TOKEN;
+ t.after(()=>{for(const key of Object.keys(process.env))if(!(key in old))delete process.env[key];Object.assign(process.env,old)});
+ const requests=[];
+ const mock=t.mock.method(global,'fetch',async(url,options)=>{requests.push(String(url));if(String(url).includes('nvidia'))return new Response('temporary outage',{status:503});return sse('Groq fallback.','stop')});
+ let visible='';const r=await streamChatWithFallback(messages,x=>visible+=x,undefined,undefined,{maxTokens:256});
+ assert.equal(requests.length,2);assert.match(requests[0],/nvidia/);assert.match(requests[1],/groq/);assert.match(r.provider,/Groq/);assert.equal(r.text,'Groq fallback.');assert.equal(visible,r.text);
+ mock.mock.restore();
 });
 
 test('cutoff recovery preserves the selected tier budget while finishing an interrupted word',async()=>{

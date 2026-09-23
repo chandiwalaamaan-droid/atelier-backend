@@ -257,7 +257,7 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   // content-context signal now: the OG system prompt keeps the content-mode
   // framing fixed, while explicitMode still affects intimate-response context,
   // spice/style fallback fields, and relationship tracking below. It no
-  // longer has any effect on provider chain order — see groqFirst below.
+  // longer has any effect on provider chain order.
   // Prefer the per-request toggle when the frontend sends it, but do not
   // silently disable mature mode when an older/stale client omits the field.
   // In that case, fall back to the user's persisted account preference. An
@@ -273,21 +273,14 @@ router.post("/:characterId", asyncHandler(async (req, res) => {
   const voiceNotes = engine?.voiceNotes;
   const intelligence = engine?.intelligence ?? 5;
   const compactHazelnut = engine?.id === "hazelnut" && hazelnutContextEnabled();
-  // Every request — SFW or NSFW/explicit — uses the single default provider
-  // chain (NVIDIA first). The only exception is Hazelnut (supreme tier,
-  // "Ultimate Experience"), which always routes through the Groq-first
-  // chain — Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama —
-  // regardless of the client's explicitMode toggle. See buildChain's
-  // comment in providers/index.ts for the full chain order.
-  // Chocolate is deliberately NVIDIA-first. Hazelnut is the only engine
-  // allowed to opt into the alternate Groq-first chain. Keeping this
-  // assignment explicit prevents future mature-mode/provider tweaks from
-  // accidentally moving Chocolate back to Groq-first.
-  const groqFirst = engine?.id === "hazelnut";
+  // Provider priority is fixed for every engine, including Chocolate and
+  // Hazelnut: NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama. Engine
+  // quality remains controlled by prompt/context/sampling settings, not by
+  // silently reordering providers.
   const maxTokens = maxTokensForIntelligence(intelligence);
   const genParams: GenParams = engine
-    ? { temperature: engine.temperature, topP: engine.topP, maxTokens, groqFirst }
-    : { maxTokens, groqFirst };
+    ? { temperature: engine.temperature, topP: engine.topP, maxTokens }
+    : { maxTokens };
   const recentWindow = engine?.id === "hazelnut" && !compactHazelnut ? 20 : engine?.recentMessageWindow ?? RECENT_MESSAGE_WINDOW;
   const summarizeTrigger = engine?.id === "hazelnut" && !compactHazelnut ? 36 : engine?.summarizeTrigger ?? SUMMARIZE_TRIGGER;
   const sceneDirective =

@@ -74,12 +74,6 @@ export type GenParams = {
   requireComplete?: boolean;
   /** Provider termination metadata; never infer truncation from punctuation. */
   onFinish?: (reason: string) => void;
-  /** When true, the chain is reordered to Groq first, then SambaNova,
-   * Cloudflare, NVIDIA last before Ollama. This is set only for the
-   * Hazelnut engine (supreme tier) — every other request, SFW or NSFW,
-   * uses the single default chain: NVIDIA first, then Groq, SambaNova,
-   * Cloudflare, Ollama. */
-  groqFirst?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -516,11 +510,10 @@ export const SUMMARIZE_TRIGGER = 15;
 //     Groq #4 -> SambaNova #1 -> SambaNova #2 -> Cloudflare Workers AI -> Ollama
 //
 // This single NVIDIA-first chain is used for every request — SFW and NSFW
-// alike. There used to be a second, Groq-first ordering that activated for
-// any explicit/NSFW chat; that's gone. The only request type that still
-// gets a different order is the Hazelnut engine (supreme tier), which sets
-// params.groqFirst and gets Groq first, then SambaNova, Cloudflare, NVIDIA
-// last before Ollama — see the groqFirst branch in buildChain below.
+// alike, including both premium engines (Chocolate and Hazelnut). Provider
+// priority is intentionally independent of engine tier so a premium engine
+// can never silently switch to a different first provider because of a
+// prompt/mode flag.
 //
 // NVIDIA #2 / SambaNova #2 are optional extra API keys
 // (NVIDIA_API_KEY_2 / SAMBANOVA_API_KEY_2) — ideally from separate
@@ -530,15 +523,13 @@ export const SUMMARIZE_TRIGGER = 15;
 // having extra slots for all hosted providers configured meaningfully
 // multiplies the request headroom before falling back to Ollama.
 //
-// NVIDIA NIM is first for the default chain: it's the working model
-// (minimax/minimax-m3), fast and reliable enough on the current free-tier
-// load to answer first for every request that isn't Hazelnut.
+// NVIDIA NIM is first for the canonical chain and therefore first for every
+// engine, including Chocolate and Hazelnut. All configured NVIDIA key slots
+// are attempted before the chain moves to Groq.
 //
-// Groq is second: qwen/qwen3.6-27b, no extra safety layer. Falls back here
-// when NVIDIA is rate-limited, down, or its breaker is open from a prior
-// timeout. It only leads the chain for the Hazelnut engine (see
-// params.groqFirst above) — kept first there so logs clearly show whether
-// Groq is answering or failing for that engine specifically.
+// Groq is second: qwen/qwen3.6-27b. It is the first cross-provider fallback
+// when all usable NVIDIA slots have been skipped or failed before any visible
+// reply was emitted. It never gets an engine-specific priority boost.
 //
 // SambaNova is third: fast (RDU hardware, ~2–4s typical) and serves raw
 // Meta Llama with no extra safety layer applied server-side, same as
@@ -635,15 +626,11 @@ function buildChain(params?: GenParams): Candidate[] {
   // SambaNova, then others
   // -----------------------------------------------------------------------
   //
-  // NVIDIA NIM is first for every request by default (see nvidia.ts for
-  // model details — currently minimaxai/minimax-m3, confirmed working on
-  // the free tier). It only yields the top spot when params.groqFirst is
-  // set, which chat.ts only does for the Hazelnut engine.
+  // NVIDIA NIM is first for every request (see nvidia.ts for model details).
+  // This includes both premium engines: Chocolate and Hazelnut.
   //
-  // Groq is second by default: qwen/qwen3.6-27b, no extra safety layer.
-  // Falls back here when NVIDIA is rate-limited, down, or its breaker is
-  // open from a prior timeout. It only leads the chain (ahead of NVIDIA)
-  // for Hazelnut requests.
+  // Groq is second and is only reached after all usable NVIDIA key slots
+  // have been skipped or failed before visible output.
   //
   // SambaNova is third: same 70B Llama quality as NVIDIA and the fastest
   // hosted option (RDU hardware, ~2-4s typical), but its 20 req/day
@@ -663,13 +650,9 @@ function buildChain(params?: GenParams): Candidate[] {
   // the same machine as the app. It's the guaranteed floor, not the default.
   // -----------------------------------------------------------------------
 
-  // NVIDIA and Groq candidates are built up front, then pushed in whichever
-  // order this request wants — NVIDIA-first by default for every request
-  // (SFW or NSFW alike), or Groq-first (NVIDIA pushed to last before
-  // Ollama) only when params.groqFirst is set, which chat.ts only does for
-  // the Hazelnut engine. SambaNova/Cloudflare below always come after the
-  // NVIDIA/Groq pair in the default order, or between Groq and NVIDIA when
-  // groqFirst is set. Ollama is always last either way.
+  // Build all keyed provider candidates first, then append them in one
+  // canonical order. Keeping a single order prevents engine-specific flags
+  // from accidentally changing provider priority. Ollama remains last.
   const nvidiaCandidates: Candidate[] = getNvidiaKeys().map(({ key, slot }) => {
     const breaker = [nvidia1Breaker, nvidia2Breaker, nvidia3Breaker][slot - 1];
     return {
@@ -708,13 +691,10 @@ function buildChain(params?: GenParams): Candidate[] {
     };
   });
 
-  if (params?.groqFirst) {
-    // Hazelnut only: Groq -> SambaNova -> Cloudflare -> NVIDIA -> Ollama
-    chain.push(...groqCandidates, ...sambanovaCandidates);
-  } else {
-    // Default (every other engine, SFW or NSFW): NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama
-    chain.push(...nvidiaCandidates, ...groqCandidates, ...sambanovaCandidates);
-  }
+  // Canonical chat fallback order for every engine:
+  // NVIDIA -> Groq -> SambaNova -> Cloudflare -> Ollama.
+  // Multiple configured keys stay adjacent inside their provider family.
+  chain.push(...nvidiaCandidates, ...groqCandidates, ...sambanovaCandidates);
 
   if (isCloudflareChatConfigured()) {
     chain.push({
@@ -727,11 +707,6 @@ function buildChain(params?: GenParams): Candidate[] {
       complete: (messages) =>
         completeCloudflareChat(messages, process.env.CLOUDFLARE_CHAT_API_TOKEN as string, CLOUDFLARE_CHAT_TIMEOUT_MS, params),
     });
-  }
-
-  if (params?.groqFirst) {
-    // Hazelnut only: NVIDIA comes after Cloudflare, just before Ollama
-    chain.push(...nvidiaCandidates);
   }
 
   chain.push({

@@ -121,9 +121,9 @@ test('missing explicitMode inherits the saved account preference, while explicit
 });
 
 
-test('Chocolate is locked to the NVIDIA-first fallback chain',async()=>{
+test('Chocolate uses the canonical NVIDIA-first fallback chain',async()=>{
  await (await post({message:'Hello',engineId:'chocolate'})).text();
- assert.equal(capturedParams.groqFirst,false);
+ assert.equal('groqFirst' in capturedParams,false);
  assert.equal(capturedParams.maxTokens,224);
 });
 
@@ -138,7 +138,7 @@ test('Hazelnut keeps one fixed tier envelope regardless of message type',async()
   assert.equal(capturedParams.minWords,105);
   assert.equal(capturedParams.maxWords,130);
   assert.equal(capturedParams.temperature,.87);assert.equal(capturedParams.topP,.95);
-  assert.equal(capturedParams.groqFirst,true);
+  assert.equal('groqFirst' in capturedParams,false);
   assert.match(captured[0].content,/around 120 words/);
  }
 });
