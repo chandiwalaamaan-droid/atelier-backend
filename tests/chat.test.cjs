@@ -173,8 +173,8 @@ test('all engines label narration only for generation, preserving stored input t
   assert.deepEqual(JSON.parse(captured.at(-1).content.slice('ROLEPLAY_INPUT '.length)),[
    {kind:'spoken',text:'hey stupid '},{kind:'narration',text:'she is looking gorgeous'}
   ]);
-  const expected={vanilla:128,strawberry:104,chocolate:224,hazelnut:256}[engineId];
-  const continuationExpected=engineId==='strawberry'?104:160;
+  const expected={vanilla:128,strawberry:144,chocolate:224,hazelnut:256}[engineId];
+  const continuationExpected={vanilla:96,strawberry:128,chocolate:160,hazelnut:160}[engineId];
   assert.equal(capturedParams.maxTokens,expected);assert.equal(capturedParams.continuationMaxTokens,continuationExpected);
  }
  const userCount=rows.filter(r=>r.role==='user').length;

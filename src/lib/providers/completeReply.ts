@@ -38,24 +38,50 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
   const maxWords = params?.maxWords ?? 0;
   const minWords = params?.minWords ?? 0;
 
-  // Do not let a verbose provider stream hundreds of words to the UI before
-  // reply_final reconciles it. The final saved text is sentence-clamped below;
-  // this streaming guard is a hard first-N-words ceiling so the live reply
-  // never visibly runs far beyond its tier.
+  // Vanilla/Strawberry have short hard ceilings, so a normal token stream can
+  // easily expose part of a sentence that reply_final later has to remove.
+  // For those two envelopes (<=70 words), only release sentence-complete
+  // prefixes that are inside the ceiling. Chocolate/Hazelnut keep the old
+  // fine-grained streaming behavior because their larger envelopes were not
+  // exhibiting the snap-back bug and we do not want to regress their feel.
   let streamedVisible = "";
+  let providerVisible = "";
   let streamCapped = false;
+  const stabilizeShortTierStream = maxWords > 0 && maxWords <= 70;
   const cappedOnToken = maxWords > 0 ? (chunk: string) => {
-    if (streamCapped || !chunk) return;
-    const candidate = streamedVisible + chunk;
-    const words = [...candidate.matchAll(/\S+/g)];
+    if (!chunk || streamCapped) return;
+    providerVisible += chunk;
+
+    if (stabilizeShortTierStream) {
+      let safeEnd = -1;
+      const sentenceEnd = /[.!?](?:[\"'”’)*_\]]*)?(?=\s|$)/g;
+      for (const match of providerVisible.matchAll(sentenceEnd)) {
+        const end = (match.index ?? 0) + match[0].length;
+        const prefix = providerVisible.slice(0, end);
+        if (countWords(prefix) <= maxWords) safeEnd = end;
+        else break;
+      }
+      if (safeEnd > streamedVisible.length) {
+        const safePrefix = providerVisible.slice(0, safeEnd);
+        const addition = safePrefix.slice(streamedVisible.length);
+        streamedVisible = safePrefix;
+        if (addition) onToken(addition);
+      }
+      return;
+    }
+
+    const words = [...providerVisible.matchAll(/\S+/g)];
     if (words.length <= maxWords) {
-      streamedVisible = candidate;
-      onToken(chunk);
+      const addition = providerVisible.slice(streamedVisible.length);
+      if (addition) {
+        streamedVisible = providerVisible;
+        onToken(addition);
+      }
       return;
     }
     const last = words[maxWords - 1];
     const end = (last.index ?? 0) + last[0].length;
-    const hardCapped = candidate.slice(0, end);
+    const hardCapped = providerVisible.slice(0, end);
     const addition = hardCapped.slice(streamedVisible.length);
     if (addition) onToken(addition);
     streamedVisible = hardCapped;
@@ -65,15 +91,15 @@ export async function streamCompleteReply(stream: Stream, messages: Message[], o
   const rawText = await stream(messages, cappedOnToken, signal, { ...params, onFinish: capture });
   let text = maxWords > 0 ? clampReplyToWordCeiling(rawText, maxWords, minWords) : rawText;
 
-  // Never make Strawberry visibly shrink after streaming. Before this guard,
-  // a provider could stream all 70 allowed words, then the sentence-aware
-  // final clamp could choose an earlier 52–60 word sentence boundary and
-  // reply_final would replace the text the user had just watched generate.
-  // Strawberry now has a much smaller native token budget, so this is only a
-  // rare safety net when a provider still overruns the requested envelope.
-  if (params?.preserveStreamedLength && streamCapped && streamedVisible.trim()
-      && countWords(text) < countWords(streamedVisible)) {
-    text = streamedVisible.trimEnd();
+  // For short tiers, release only text that survived final reconciliation.
+  // Their live stream contains sentence-complete prefixes only, so final text
+  // extends (or equals) what the user has already seen instead of replacing it.
+  if (stabilizeShortTierStream && text.startsWith(streamedVisible)) {
+    const deferred = text.slice(streamedVisible.length);
+    if (deferred) {
+      onToken(deferred);
+      streamedVisible = text;
+    }
   }
 
   let continuations = 0;

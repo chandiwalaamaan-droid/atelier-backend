@@ -61,9 +61,8 @@ export type GenParams = {
   maxTokens?: number;
   /** Bounded extra tokens to finish a provider-truncated reply. */
   continuationMaxTokens?: number;
-  /** Keep the authoritative final text from becoming shorter than text that
-   * was already streamed to the client. Used by Strawberry so a rare
-   * provider overrun cannot visibly "snap back" after generation. */
+  /** Legacy compatibility flag. The stream now buffers the near-ceiling tail
+   * until sentence-aware reconciliation, so named tiers no longer need it. */
   preserveStreamedLength?: boolean;
   /** Fixed tier reply envelope. These are server-owned and must not be
    * changed by the wording or size of the latest user message. */
@@ -840,7 +839,7 @@ async function attemptStream(
     }
     guard.flushIfUndecided();
     const latency = Date.now() - start;
-    console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms)`);
+    console.log(`[providers] ${candidate.name} answered in ${latency}ms (total ${Date.now() - t0}ms, finish=${result.finishReason}, continuations=${result.continuations})`);
     candidate.breaker?.reset();
     recordProviderRequest(candidate.name, candidate.slot, true, latency, false, false);
     return result;

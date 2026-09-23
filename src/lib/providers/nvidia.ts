@@ -99,33 +99,46 @@ export function getNvidiaKeys(): { key: string; slot: number }[] {
 // model can spend several extra seconds deliberating before the visible
 // reply even starts, which is enough to blow through NVIDIA_TIMEOUT_MS and
 // look like a random/content-dependent failure even though the model
-// would have answered fine given more time. force_nonempty_content is a
-// second belt-and-braces flag some Nemotron 3 endpoints respect, to stop
-// a request that's ALL thinking budget from coming back with a
-// technically-200-but-empty completion.
+// would have answered fine given more time.
 //
 // Matches any nvidia/nemotron-3* or nvidia/nemotron-nano-3* model string,
 // which covers every current Nemotron 3-generation chat model without
 // having to hardcode each one by name as NVIDIA adds/retires them.
 const IS_NEMOTRON_3_FAMILY = /^nvidia\/nemotron-(3|nano-3|3\.5)/.test(MODEL);
+const IS_NEMOTRON_3_SUPER = /^nvidia\/nemotron-3-super(?:-|$)/.test(MODEL);
 
 function genParamsExtraBody(params?: GenParams): Record<string, unknown> | undefined {
   const body: Record<string, unknown> = {};
-  if (params?.temperature !== undefined) body.temperature = params.temperature;
-  if (params?.topP !== undefined) body.top_p = params.topP;
+
+  // Nemotron 3 Super is tuned around temperature=1.0 / top_p=0.95. Keep the
+  // per-engine values for every other provider/model, but do not feed this
+  // model off-spec sampling values merely because Vanilla/Strawberry use
+  // lower temperatures elsewhere in the fallback chain.
+  if (IS_NEMOTRON_3_SUPER) {
+    body.temperature = 1.0;
+    body.top_p = 0.95;
+  } else {
+    if (params?.temperature !== undefined) body.temperature = params.temperature;
+    if (params?.topP !== undefined) body.top_p = params.topP;
+  }
+
+  // Roleplay replies do not benefit from hidden deliberation, and hidden
+  // reasoning makes latency/token usage less predictable. NVIDIA documents
+  // this switch for current Nemotron 3 chat models. Keep the payload minimal:
+  // unsupported chat-template kwargs can themselves cause endpoint errors.
   if (IS_NEMOTRON_3_FAMILY) {
-    body.chat_template_kwargs = { enable_thinking: false, force_nonempty_content: true };
+    body.chat_template_kwargs = { enable_thinking: false };
   }
   return Object.keys(body).length ? body : undefined;
 }
 
-// Additional headroom for hidden reasoning. Visible length is guided by the
-// selected engine; a token-limit finish triggers bounded same-provider recovery.
-const NEMOTRON_REASONING_TOKEN_BUFFER = 512;
-
 function effectiveMaxTokens(params?: GenParams): number {
-  const requested = params?.maxTokens ?? 1024;
-  return IS_NEMOTRON_3_FAMILY ? requested + NEMOTRON_REASONING_TOKEN_BUFFER : requested;
+  // Reasoning is explicitly disabled above, so adding a blanket +512 token
+  // "reasoning buffer" is counterproductive: it lets short tiers generate
+  // far past their word envelope and forces the server to cut the visible
+  // reply afterward. Use the tier's real generation budget and let the
+  // bounded same-provider continuation recover an actual length finish.
+  return params?.maxTokens ?? 1024;
 }
 
 export async function streamNvidiaChat(

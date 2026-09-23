@@ -31,12 +31,12 @@ export function replyProfile(intelligence: number) {
     ordinaryWords: 60,
     minWords: 50,
     maxWords: 70,
-    // Keep the provider's native generation close to Strawberry's real
-    // 50–70 word envelope instead of letting it write ~100+ words and
-    // relying on reply_final to cut the visible answer back afterward.
-    // A true token-limit finish is recovered on the same provider below.
-    tokens: 104,
-    detailedTokens: 104,
+    // 104 tokens was too close to the 70-word ceiling for punctuation-heavy
+    // roleplay text and could end with finish_reason=length mid-sentence.
+    // 144 still keeps Strawberry materially cheaper than Chocolate while
+    // leaving enough room for a natural stop inside its 50–70 word envelope.
+    tokens: 144,
+    detailedTokens: 144,
   };
   if (intelligence <= 8.5) return {
     name: "Chocolate",
@@ -86,23 +86,31 @@ export function clampReplyToWordCeiling(text: string, maxWords: number, minWords
   const floorEnd = floor ? (floor.index ?? 0) + floor[0].length : Math.floor(hardEnd * 0.7);
 
   let boundary = -1;
+  let lastCompleteBoundary = -1;
   const sentenceEnd = /[.!?](?:[\"'”’)*_\]]*)?(?=\s|$)/g;
   for (const match of prefix.matchAll(sentenceEnd)) {
     const end = (match.index ?? 0) + match[0].length;
+    lastCompleteBoundary = end;
     if (end >= floorEnd) boundary = end;
   }
   if (boundary > 0) return prefix.slice(0, boundary).trim();
 
-  // Last resort: stay inside the hard ceiling. This path is mainly for one
-  // extremely long unpunctuated sentence; terminate it cleanly rather than
-  // returning an ellipsis that looks like a provider cutoff.
+  // Completeness beats mechanically hitting the tier minimum. If the model
+  // started another long sentence that crosses the hard ceiling, keep the
+  // last complete sentence even when it is a little below minWords; the
+  // same-provider depth top-up can then add a fresh complete beat.
+  if (lastCompleteBoundary > 0) return prefix.slice(0, lastCompleteBoundary).trim();
+
+  // Last resort for one extremely long unpunctuated sentence: stay inside
+  // the hard ceiling and terminate it cleanly rather than returning an
+  // ellipsis that looks like a provider cutoff.
   const clipped = prefix.replace(/[\s,;:—-]+$/g, '').trim();
   return /[.!?](?:[\"'”’)*_\]]*)?$/.test(clipped) ? clipped : clipped + '.';
 }
 
 export function buildReplyGuidance(intelligence: number): string {
   const p = replyProfile(intelligence);
-  return `TIER-LOCKED REPLY ENVELOPE — ${p.name}: ${p.purpose}. Every normal reply from this engine should land around ${p.ordinaryWords} words, normally ${p.minWords}–${p.maxWords} words. This length and quality level belong to the selected engine and stay stable regardless of whether the latest user message is one word, very long, action-only, casual, emotional, explicit, or asks for a shorter/longer answer. Adapt the CONTENT and emotional intensity to the turn, not the tier's response depth. Complete a coherent character beat within this envelope: respond to the actual point, add the amount of dialogue/action/subtext appropriate to ${p.name}, and finish naturally without filler. Every sentence should add something new; do not restate the same emotion, gaze, blush, heartbeat, hesitation, posture, or invitation merely to fill the word target. Prefer one specific reaction plus meaningful dialogue/scene movement over several paraphrases of the same beat. Do not imitate the length of earlier replies or another engine.`;
+  return `TIER-LOCKED REPLY ENVELOPE — ${p.name}: ${p.purpose}. Every normal reply from this engine should land around ${p.ordinaryWords} words, normally ${p.minWords}–${p.maxWords} words. This length and quality level belong to the selected engine and stay stable regardless of whether the latest user message is one word, very long, action-only, casual, emotional, explicit, or asks for a shorter/longer answer. Adapt the CONTENT and emotional intensity to the turn, not the tier's response depth. Complete a coherent character beat within this envelope: respond to the actual point, add the amount of dialogue/action/subtext appropriate to ${p.name}, and finish naturally without filler. Treat ${p.maxWords} words as a finish line: start wrapping up before it, and do not begin a new sentence near the ceiling unless you can finish that sentence inside the envelope. Every sentence should add something new; do not restate the same emotion, gaze, blush, heartbeat, hesitation, posture, or invitation merely to fill the word target. Prefer one specific reaction plus meaningful dialogue/scene movement over several paraphrases of the same beat. Do not imitate the length of earlier replies or another engine.`;
 }
 
 /**
@@ -115,12 +123,11 @@ export function planReply(intelligence: number, _latestUserText: string, _sceneD
   return {
     mode: "tier" as const,
     maxTokens: p.tokens,
-    continuationMaxTokens: p.name === "Strawberry" ? 104 : 160,
-    // Strawberry previously streamed up to its hard ceiling and then the
-    // final sentence-aware clamp could roll the UI backward by a sentence.
-    // Preserve what was already shown for this tier if a provider still
-    // overruns the much smaller native token budget.
-    preserveStreamedLength: p.name === "Strawberry",
+    continuationMaxTokens: p.name === "Vanilla" ? 96 : p.name === "Strawberry" ? 128 : 160,
+    // streamCompleteReply now withholds only the near-ceiling tail until it
+    // knows the authoritative sentence-complete final text, so no tier needs
+    // a "preserve an already hard-clipped stream" exception.
+    preserveStreamedLength: false,
     targetWords: p.ordinaryWords,
     minWords: p.minWords,
     maxWords: p.maxWords,

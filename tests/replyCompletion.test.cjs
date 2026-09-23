@@ -31,24 +31,36 @@ test('engine budgets are tier-locked and invariant to user wording',()=>{
  }
 });
 
-test('Strawberry generates near its own envelope instead of relying on post-generation truncation',()=>{
+test('Strawberry has enough native token headroom to finish its 50-70 word envelope',()=>{
  const plan=planReply(6,'Anything');
- assert.equal(plan.maxTokens,104);
- assert.equal(plan.continuationMaxTokens,104);
+ assert.equal(plan.maxTokens,144);
+ assert.equal(plan.continuationMaxTokens,128);
  assert.equal(plan.targetWords,60);
  assert.equal(plan.minWords,50);
  assert.equal(plan.maxWords,70);
- assert.equal(plan.preserveStreamedLength,true);
+ assert.equal(plan.preserveStreamedLength,false);
 });
 
-test('Strawberry never snaps backward after the user has already seen its 70-word ceiling',async()=>{
+test('Strawberry never exposes text that reply_final later cuts away',async()=>{
  const first=Array.from({length:55},(_,i)=>`first${i+1}`).join(' ')+'.';
  const tail=Array.from({length:30},(_,i)=>`tail${i+1}`).join(' ')+'.';
  const overlong=`${first} ${tail}`;
  const s=scripted([{text:overlong,reason:'stop'}]);let visible='';
  const r=await streamCompleteReply(s.stream,messages,t=>visible+=t,undefined,planReply(6,'Hi'));
  assert.equal(s.calls,1);
- assert.equal(r.text.trim().split(/\s+/).length,70);
+ assert.equal(r.text.trim().split(/\s+/).length,55);
+ assert.match(r.text,/[.!?][\"'”’)*_\]]*$/);
+ assert.equal(visible,r.text);
+ assert.equal(r.finishReason,'stop');
+});
+
+test('Vanilla keeps the last complete sentence instead of visibly cutting a later sentence mid-way',async()=>{
+ const first=Array.from({length:32},(_,i)=>`first${i+1}`).join(' ')+'.';
+ const tail=Array.from({length:20},(_,i)=>`tail${i+1}`).join(' ')+'.';
+ const s=scripted([{text:`${first} ${tail}`,reason:'stop'}]);let visible='';
+ const r=await streamCompleteReply(s.stream,messages,t=>visible+=t,undefined,planReply(3,'Hi'));
+ assert.equal(r.text.trim().split(/\s+/).length,32);
+ assert.match(r.text,/[.!?][\"'”’)*_\]]*$/);
  assert.equal(visible,r.text);
  assert.equal(r.finishReason,'stop');
 });
